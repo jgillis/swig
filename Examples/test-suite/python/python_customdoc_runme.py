@@ -47,3 +47,90 @@ swig_assert('Both triple quotes: """ and \'\'\' and trailing slash\\' in m.quote
 swig_assert("labelled_type(literal $name $in $out labelled) -> integer" in m.labelled_type.__doc__)
 swig_assert("literal $name $in $out" in failure_message(m.labelled_type, object(), TypeError))
 swig_assert("unnamed(integer 0/1, integer 1/2)" in m.unnamed.__doc__)
+
+
+# Diagnostics must not consume borrowed arguments or replace real exceptions.
+import sys
+
+swig_assert("swig_customdoc_unloaded" not in sys.modules)
+failure_message(m.repeated, object(), TypeError)
+swig_assert("swig_customdoc_unloaded" not in sys.modules)
+
+token = object()
+baseline = failure_message(m.choose, token, TypeError)
+single_baseline = failure_message(m.singleton, token, TypeError)
+for callback in (None, 42):
+    m.describe_arguments = callback
+    swig_check(failure_message(m.choose, token, TypeError), baseline)
+
+def raising_callback(*args):
+    raise RuntimeError("diagnostic callback failed")
+
+class BadRepr:
+    def __repr__(self):
+        raise RuntimeError("diagnostic repr failed")
+
+class WrongRepr:
+    def __repr__(self):
+        return 42
+
+class BadEncoding:
+    def __repr__(self):
+        return "\ud800"
+
+for callback in (raising_callback, lambda *args: BadRepr(),
+                 lambda *args: WrongRepr(), lambda *args: BadEncoding()):
+    m.describe_arguments = callback
+    swig_check(failure_message(m.choose, token, TypeError), baseline)
+    swig_check(failure_message(m.singleton, token, TypeError), single_baseline)
+
+result = ["argument description"]
+def describe_arguments(*args):
+    swig_check(args, (token,))
+    return result
+
+m.describe_arguments = describe_arguments
+argument_refs = sys.getrefcount(token)
+result_refs = sys.getrefcount(result)
+callback_refs = sys.getrefcount(describe_arguments)
+module_refs = sys.getrefcount(m)
+for unused in range(100):
+    for function in (m.choose, m.singleton):
+        message = failure_message(function, token, TypeError)
+        swig_assert("You have: ['argument description']" in message)
+swig_check(sys.getrefcount(token), argument_refs)
+swig_check(sys.getrefcount(result), result_refs)
+swig_check(sys.getrefcount(describe_arguments), callback_refs)
+swig_check(sys.getrefcount(m), module_refs)
+swig_check(failure_message(m.fail_value, 1, ValueError), "original error")
+
+seen = []
+def record_arguments(*args):
+    seen.append(args)
+    return "recorded"
+m.describe_arguments = record_arguments
+swig_check(failure_message(m.fail_value, 1, ValueError), "original error")
+swig_check(seen, [])
+try:
+    m.fail_zero()
+except TypeError as error:
+    swig_assert("zero argument failure" in str(error))
+    swig_assert("You have: 'recorded'" in str(error))
+else:
+    raise RuntimeError("Expected TypeError")
+swig_check(seen.pop(), ())
+failure_message(m.Example, token, TypeError)
+swig_check(seen.pop(), (token,))
+instance = m.Example(1)
+failure_message(instance.method, token, TypeError)
+received = seen.pop()
+# Builtin bound methods take self separately; proxy methods pass it explicitly.
+swig_assert(received == (token,) or received == (instance, token))
+
+# The callback may remove its own module attribute while running.
+def remove_callback(*args):
+    del m.describe_arguments
+    return "removed"
+m.describe_arguments = remove_callback
+swig_assert("You have: 'removed'" in failure_message(m.choose, token, TypeError))
+swig_check(failure_message(m.choose, token, TypeError), baseline)

@@ -2,6 +2,8 @@
 
 #ifdef SWIGPYTHON
 %feature("customdoc", "1");
+%feature("python:customdoc:argtypes", "python_customdoc.describe_arguments");
+%feature("python:customdoc:argtypes", "swig_customdoc_unloaded.describe") repeated;
 %feature("customdoc:main", "$name: $brief\n$overview$main");
 %feature("customdoc:arg:normal:style_error", "$type");
 %feature("customdoc:arg:only:out", "$type");
@@ -33,6 +35,7 @@
 %apply int *OUTPUT { int *out };
 %apply int *INOUT { int *inout };
 %exception fail_value {
+  $action
   PyErr_SetString(PyExc_ValueError, "original error");
   SWIG_fail;
 }
@@ -93,4 +96,14 @@ void backslash_quotes() {}
 void quote_kinds() {}
 int labelled_type(int labelled) { return labelled; }
 int unnamed(int, int) { return 0; }
+%}
+
+#ifdef SWIGPYTHON
+%exception fail_zero {
+  PyErr_SetString(PyExc_TypeError, "zero argument failure");
+  SWIG_fail;
+}
+#endif
+%inline %{
+void fail_zero() {}
 %}

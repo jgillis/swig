@@ -3384,6 +3384,29 @@ public:
     }
   }
 
+  /* Emit the optional Python callback used to describe rejected arguments. */
+  void customdocArgumentDescription(Node *n, Wrapper *f, bool single_argument = false) {
+    String *callback = Getattr(n, "feature:python:customdoc:argtypes");
+    if (!callback || Len(callback) == 0 || Equal(callback, "0"))
+      return;
+    const char *separator = strrchr(Char(callback), '.');
+    if (!separator || separator == Char(callback) || !separator[1]) {
+      Swig_error(input_file, line_number, "The 'python:customdoc:argtypes' feature requires a qualified module.callback name.\n");
+      return;
+    }
+    String *module_name = NewStringWithSize(Char(callback), separator - Char(callback));
+    Seek(module_name, 0, SEEK_SET);
+    String *escaped_module = Swig_string_escape(module_name);
+    String *callback_name = NewString(separator + 1);
+    Seek(callback_name, 0, SEEK_SET);
+    String *escaped_callback = Swig_string_escape(callback_name);
+    Printf(f->code, "  SWIG_Python_AddArgumentDescription(\"%s\", \"%s\", args, %d);\n", escaped_module, escaped_callback, single_argument ? 1 : 0);
+    Delete(escaped_callback);
+    Delete(callback_name);
+    Delete(escaped_module);
+    Delete(module_name);
+  }
+
   /* ------------------------------------------------------------
    * dispatchFunction()
    * ------------------------------------------------------------ */
@@ -3483,6 +3506,7 @@ public:
              "  if (!PyErr_Occurred() || PyErr_ExceptionMatches(PyExc_TypeError))\n"
              "    SWIG_Python_RaiseOrModifyTypeError(\"Possible prototypes are:\\n%s\");\n",
              escaped);
+      customdocArgumentDescription(n, f);
       Printf(f->code, "return %s;\n", builtin_ctor ? "-1" : "0");
       Delete(escaped);
       Delete(prototypes);
@@ -4128,6 +4152,7 @@ public:
              "  if (!PyErr_Occurred() || PyErr_ExceptionMatches(PyExc_TypeError))\n"
              "    SWIG_Python_RaiseOrModifyTypeError(\"Prototype: %s\");\n",
              escaped);
+      customdocArgumentDescription(n, f, funpack && onearg && !builtin_ctor && !Equal(Getattr(n, "feature:python:slot"), "tp_call"));
       Delete(escaped);
       Delete(prototype);
     }

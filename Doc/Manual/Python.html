@@ -6279,6 +6279,32 @@ to a <tt>TypeError</tt> without replacing other exceptions raised by user code.
 Operators using <tt>python:maybecall</tt> retain their <tt>NotImplemented</tt> behavior.
 </p>
 
+<p>
+To append application-specific descriptions of rejected arguments, set a qualified
+Python callback name alongside <tt>customdoc</tt>:
+</p>
+
+<div class="code"><pre>
+%feature("python:customdoc:argtypes", "example.describe_arguments");
+</pre></div>
+
+<div class="targetlang"><pre>
+def describe_arguments(*args):
+    return tuple(type(arg).__name__ for arg in args)
+</pre></div>
+
+<p>
+The callback is looked up in the named, already loaded module; SWIG does not import it.
+It receives the positional arguments and the representation of its return value is
+appended to the <tt>TypeError</tt> as <tt>You have: ...</tt>. Proxy methods include
+<tt>self</tt> among these arguments; builtin bound methods pass <tt>self</tt> separately
+and omit it from the callback arguments. Keyword arguments are not included.
+A missing or noncallable callback, or an exception while calling it or formatting its
+result, leaves the original diagnostic unchanged. Other exception types are preserved
+without calling the callback. This feature is disabled by default; use an empty value
+or <tt>"0"</tt> to disable an inherited setting for a declaration.
+</p>
+
 <H3><a name="Python_doxygen_docstrings">35.10.5 Doxygen comments</a></H3>
 
 

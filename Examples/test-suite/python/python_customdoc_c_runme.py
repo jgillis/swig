@@ -9,3 +9,14 @@ except TypeError as error:
     swig_assert("Prototype: add(int, int) -> int" in str(error))
 else:
     raise RuntimeError("Expected TypeError")
+
+
+def describe_arguments(*args):
+    return tuple(type(arg).__name__ for arg in args)
+python_customdoc_c.describe_arguments = describe_arguments
+try:
+    python_customdoc_c.add(object(), 3)
+except TypeError as error:
+    swig_assert("You have: ('object', 'int')" in str(error))
+else:
+    raise RuntimeError("Expected TypeError")
