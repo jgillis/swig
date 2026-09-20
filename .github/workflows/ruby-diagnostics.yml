@@ -213,7 +213,7 @@ jobs:
           vm_stat
           ulimit -a
           cd build/build
-          ./preinst-swig -ruby -debug-include -E ../../Examples/test-suite/li_cpointer.i > ../../diagnostic-artifacts/li_cpointer-preprocessed.txt
+          ./preinst-swig -ruby -E ../../Examples/test-suite/li_cpointer.i > ../../diagnostic-artifacts/li_cpointer-preprocessed.txt
 
     - name: Test
       working-directory: build/build
