@@ -5,7 +5,7 @@ async function check() {
   const expression: number = m.MACRO_EXPRESSION;
   const flag: boolean = m.FLAG;
   const wide: bigint = m.WIDE;
-  const state: number = m.DEFAULT_STATE;
+  const state: number | bigint = m.DEFAULT_STATE;
   // @ts-expect-error Exported constants are read-only.
   m.MACRO_EXPRESSION = 4;
   return [text, expression, flag, wide, state];

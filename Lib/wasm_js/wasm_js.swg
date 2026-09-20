@@ -289,11 +289,24 @@ _argouts[_argout_idx++] = (void*)(X);
 %wasm_scalar_value(unsigned long long)
 %wasm_scalar_value(float)
 %wasm_scalar_value(double)
-%typemap(ctype) enum SWIGTYPE "int"
-%typemap(in) enum SWIGTYPE { $1 = ($1_ltype)$input; }
-%typemap(out) enum SWIGTYPE { $result = (int)$1; }
-%typemap(jsarg, wasmjs_scalar="1") enum SWIGTYPE "$input"
-%typemap(jsout) enum SWIGTYPE "$call"
+%typemap(ctype) enum SWIGTYPE, const enum SWIGTYPE & "EM_VAL"
+%typemap(in) enum SWIGTYPE {
+  if (!swig_wasmjs::enum_conversion< $1_ltype >::read(swig_wasmjs::borrowed_value($input), &$1))
+    SWIG_exception_fail(SWIG_TypeError, "Invalid enum value or underlying integer range");
+}
+%typemap(in) const enum SWIGTYPE & ($*1_ltype temporary) {
+  if (!swig_wasmjs::enum_conversion< $*1_ltype >::read(swig_wasmjs::borrowed_value($input), &temporary))
+    SWIG_exception_fail(SWIG_TypeError, "Invalid enum value or underlying integer range");
+  $1 = &temporary;
+}
+%typemap(out) enum SWIGTYPE {
+  $result = swig_wasmjs::enum_conversion< $1_ltype >::write($1).release_ownership();
+}
+%typemap(out) const enum SWIGTYPE & {
+  $result = swig_wasmjs::enum_conversion< $*1_ltype >::write(*$1).release_ownership();
+}
+%typemap(jsarg) enum SWIGTYPE, const enum SWIGTYPE & "__unwrap($input)"
+%typemap(jsout) enum SWIGTYPE, const enum SWIGTYPE & "__from_handle($call)"
 %typemap(jsout) void "$call"
 %typemap(jsarg, wasmjs_scalar="1") bool "$input"
 
@@ -323,8 +336,13 @@ _argouts[_argout_idx++] = (void*)(X);
   if (typeof $input !== 'bigint' || BigInt.asUintN(64, $input) !== $input)
     throw new TypeError("Expected an unsigned 64-bit bigint");
 }
-%typemap(jstypecheck, wasmjs_scalar="1") float, double "typeof $input === 'number'"
-%typemap(jsin, wasmjs_scalar="1") float, double {
+%typemap(jstypecheck, wasmjs_scalar="1") float "typeof $input === 'number' && (!Number.isFinite($input) || Math.abs($input) <= 3.4028234663852886e38)"
+%typemap(jsin, wasmjs_scalar="1") float {
+  if (typeof $input !== 'number' || (Number.isFinite($input) && Math.abs($input) > 3.4028234663852886e38))
+    throw new TypeError("Expected a number within the finite float range");
+}
+%typemap(jstypecheck, wasmjs_scalar="1") double "typeof $input === 'number'"
+%typemap(jsin, wasmjs_scalar="1") double {
   if (typeof $input !== 'number') throw new TypeError("Expected a number");
 }
 %typemap(jstypecheck, wasmjs_scalar="1") bool "typeof $input === 'boolean'"
@@ -381,10 +399,11 @@ _argouts[_argout_idx++] = (void*)(X);
 %typemap(typecheck, precedence=SWIG_TYPECHECK_STRING) std::string, const std::string &, std::string &, char *, const char * {
   $1 = swig_wasmjs::borrowed_value($input).typeOf().as<std::string>() == "string";
 }
-%typemap(typecheck, precedence=SWIG_TYPECHECK_INT32, fragment=SWIG_AsVal_frag(int)) enum SWIGTYPE {
-  emscripten::val value = swig_wasmjs::borrowed_value($input);
-  $1 = value.typeOf().as<std::string>() == "number" &&
-       SWIG_IsOK(SWIG_AsVal_dec(int)(reinterpret_cast<void *>($input), 0));
+%typemap(typecheck, precedence=SWIG_TYPECHECK_INT32, wasmjs_enum="1") enum SWIGTYPE {
+  $1 = swig_wasmjs::enum_conversion< $1_ltype >::read(swig_wasmjs::borrowed_value($input), 0);
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_INT32, wasmjs_enum="1") const enum SWIGTYPE & {
+  $1 = swig_wasmjs::enum_conversion< $*1_ltype >::read(swig_wasmjs::borrowed_value($input), 0);
 }
 %typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER) SWIGTYPE {
   void *pointer = 0;

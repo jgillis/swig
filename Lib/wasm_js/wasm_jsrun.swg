@@ -6,6 +6,9 @@
 
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
+#include <cmath>
+#include <limits>
+#include <type_traits>
 
 /* EM_VAL is the JavaScript value handle used by the generated wrappers. */
 using emscripten::EM_VAL;
@@ -76,6 +79,36 @@ inline val borrowed_value(EM_VAL handle) {
   borrowed.release_ownership();
   return owned;
 }
+
+/* Enums retain their compiler-selected underlying width and signedness. */
+template <class T> struct enum_conversion {
+  typedef typename std::underlying_type<T>::type underlying_type;
+  static bool read(const val &value, T *result) {
+    const std::string kind = value.typeOf().as<std::string>();
+    underlying_type converted;
+    if (sizeof(underlying_type) == 8) {
+      if (kind != "bigint") return false;
+      val bounded = val::global("BigInt").call<val>(
+          std::is_signed<underlying_type>::value ? "asIntN" : "asUintN", 64, value);
+      if (!bounded.strictlyEquals(value)) return false;
+      converted = value.as<underlying_type>();
+    } else {
+      if (kind != "number") return false;
+      double number = value.as<double>();
+      if (!std::isfinite(number) || std::trunc(number) != number ||
+          number < static_cast<double>(std::numeric_limits<underlying_type>::lowest()) ||
+          number > static_cast<double>(std::numeric_limits<underlying_type>::max())) return false;
+      converted = static_cast<underlying_type>(number);
+    }
+    if (result) *result = static_cast<T>(converted);
+    return true;
+  }
+  static val write(T value) {
+    if (std::is_same<underlying_type, bool>::value)
+      return val(static_cast<unsigned>(value));
+    return val(static_cast<underlying_type>(value));
+  }
+};
 
 template <class T> struct type_descriptor {
   static swig_type_info *get() { return 0; }

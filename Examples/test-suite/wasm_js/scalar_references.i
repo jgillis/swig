@@ -18,5 +18,7 @@ int choose(const int& value) { (void)value; return 1; }
 int choose(const bool& value) { (void)value; return 2; }
 int choose(const double& value) { (void)value; return 3; }
 int choose(const long long& value) { (void)value; return 4; }
+int floating_choice(float value) { (void)value; return 1; }
+int floating_choice(double value) { (void)value; return 2; }
 void mutable_integer(int& value) { ++value; }
 %}

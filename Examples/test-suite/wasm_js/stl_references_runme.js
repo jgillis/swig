@@ -1,5 +1,9 @@
 const assert = require('assert');
 require('./stl_references_wrap.js')().then((m) => {
+  assert.strictEqual(m.missing_vector(), null);
+  assert.strictEqual(m.missing_map(), null);
+  assert.strictEqual(m.missing_pair(), null);
+  assert.throws(() => m.mutate_vector_pointer(null), TypeError);
   const store = new m.Store();
   const vector = store.vector_ref();
   const vectorPointer = store.vector_pointer();

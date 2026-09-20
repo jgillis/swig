@@ -166,15 +166,18 @@ struct conversion<T, typename std::enable_if<std::is_arithmetic<T>::value>::type
 
 template <class T>
 struct conversion<T, typename std::enable_if<std::is_enum<T>::value>::type> {
-  typedef typename std::underlying_type<T>::type underlying_type;
   static void validate(const val &value) {
-    conversion<underlying_type>::validate(value);
+    if (!enum_conversion<T>::read(value, 0))
+      throw conversion_error("Invalid enum container element or underlying integer range");
   }
   static T read(const val &value) {
-    return static_cast<T>(conversion<underlying_type>::read(value));
+    T result;
+    if (!enum_conversion<T>::read(value, &result))
+      throw conversion_error("Invalid enum container element or underlying integer range");
+    return result;
   }
-  static val write(T value, output_context *context = 0) {
-    return conversion<underlying_type>::write(static_cast<underlying_type>(value), context);
+  static val write(T value, output_context * = 0) {
+    return enum_conversion<T>::write(value);
   }
 };
 

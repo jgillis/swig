@@ -20,6 +20,12 @@ require('./scalar_references_wrap.js')().then((m) => {
   assert.throws(() => m.integer_ref('wrong'));
   assert.throws(() => m.unsigned_ref(-1));
   assert.throws(() => m.double_ref('wrong'));
+  assert.throws(() => m.float_ref(1e100));
+  assert.throws(() => m.float_ref(-1e100));
+  assert.deepStrictEqual([m.float_ref(NaN), m.float_ref(Infinity), m.float_ref(-Infinity)], [NaN, Infinity, -Infinity]);
+  assert.strictEqual(m.floating_choice(1.25), 1);
+  assert.strictEqual(m.floating_choice(1e100), 2);
+  assert.strictEqual(m.floating_choice(-1e100), 2);
   for (const value of [-9223372036854775808n, -9007199254740993n, 9223372036854775807n])
     assert.strictEqual(m.wide_ref(value), value);
   assert.strictEqual(m.unsigned_wide_ref(18446744073709551615n), 18446744073709551615n);

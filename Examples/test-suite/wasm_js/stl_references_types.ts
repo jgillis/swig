@@ -2,15 +2,25 @@ import createModule = require('./stl_references_wrap');
 async function check() {
   const m = await createModule();
   const store = new m.Store();
-  const vector = store.vector_ref();
-  const map = store.map_ref();
-  const pair = store.pair_ref();
+  const vector: createModule.IntVector = store.vector_ref();
+  const map: createModule.IntMap = store.map_ref();
+  const pair: createModule.IntPair = store.pair_ref();
   m.mutate_vector(vector);
-  m.mutate_vector_pointer(store.vector_pointer());
+  const vectorPointer = store.vector_pointer();
+  if (vectorPointer) m.mutate_vector_pointer(vectorPointer);
   m.mutate_map(map);
-  m.mutate_map_pointer(store.map_pointer());
+  const mapPointer = store.map_pointer();
+  if (mapPointer) m.mutate_map_pointer(mapPointer);
   m.mutate_pair(pair);
-  m.mutate_pair_pointer(store.pair_pointer());
+  const pairPointer = store.pair_pointer();
+  if (pairPointer) m.mutate_pair_pointer(pairPointer);
+  const missingVector: createModule.IntVector | null = m.missing_vector();
+  const missingMap: createModule.IntMap | null = m.missing_map();
+  const missingPair: createModule.IntPair | null = m.missing_pair();
+  // @ts-expect-error Container pointer outputs can be null.
+  const nonnull: createModule.IntVector = m.missing_vector();
+  // @ts-expect-error Mutable container pointer inputs require a live proxy.
+  m.mutate_vector_pointer(null);
   const values: number[] = store.vector_snapshot();
   const mapping: Map<number, number> = store.map_snapshot();
   const tuple: [number, number] = store.pair_snapshot();

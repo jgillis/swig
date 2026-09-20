@@ -1,7 +1,7 @@
 import createModule = require('./basic_wrap');
 async function check() {
   const m = await createModule();
-  const colour: number = m.Colour.GREEN;
+  const colour: number | bigint = m.Colour.GREEN;
   // @ts-expect-error Enum values are read only.
   m.Colour.GREEN = 2;
   const c = new m.Counter(3);

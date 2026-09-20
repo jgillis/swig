@@ -25,6 +25,9 @@ public:
   std::pair<int, int>* pair_pointer() { return &pair_; }
   const std::pair<int, int>& pair_snapshot() const { return pair_; }
 };
+std::vector<int>* missing_vector() { return 0; }
+std::map<int, int>* missing_map() { return 0; }
+std::pair<int, int>* missing_pair() { return 0; }
 void mutate_vector(std::vector<int>& value) { value.push_back(9); }
 void mutate_vector_pointer(std::vector<int>* value) { value->push_back(10); }
 void mutate_map(std::map<int, int>& value) { value[6] = 7; }

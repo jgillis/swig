@@ -18,6 +18,15 @@ require('./stl_nested_wrap.js')().then((m) => {
   assert.throws(() => m.float_values([-1e100]));
   assert.deepStrictEqual(m.float_values([NaN, Infinity, -Infinity]), [NaN, Infinity, -Infinity]);
 
+  const floatProxy = new m.FloatVector();
+  for (const value of [NaN, Infinity, -Infinity]) floatProxy.push_back(value);
+  assert.deepStrictEqual(m.float_values(floatProxy), [NaN, Infinity, -Infinity]);
+  assert.throws(() => floatProxy.push_back(1e100));
+  assert.throws(() => floatProxy.set(0, -1e100));
+  assert.throws(() => new m.FloatVector(1, 1e100));
+  assert.deepStrictEqual(m.float_values(floatProxy), [NaN, Infinity, -Infinity]);
+  floatProxy.delete();
+
   const signed = [-9223372036854775808n, -9007199254740993n, 9007199254740993n, 9223372036854775807n];
   const unsigned = [0n, 9007199254740993n, 18446744073709551615n];
   assert.deepStrictEqual(m.wide_values(signed), signed);

@@ -1171,6 +1171,16 @@ protected:
   /* type annotations. */
   /* ======================================================================== */
 
+  String *enum_ts_type(Node *node) {
+    SwigType *base = Getattr(node, "enumbase");
+    if (!base && !GetFlag(node, "scopedenum"))
+      return NewString("number | bigint");
+    SwigType *resolved = base ? SwigType_typedef_resolve_all(base) : 0;
+    int kind = resolved ? SwigType_type(resolved) : T_INT;
+    Delete(resolved);
+    return NewString(kind == T_LONGLONG || kind == T_ULONGLONG ? "bigint" : "number");
+  }
+
   String *cpp_to_ts(const String *cpp_in) {
     if (!cpp_in || Len(cpp_in) == 0)
       return NewString("any");
@@ -1198,9 +1208,11 @@ protected:
     }
 
     String *cpp = NewStringWithSize(s, n);
-    if (SwigType_isenum(cpp)) {
+    Node *enum_node = enumLookup(cpp);
+    if (enum_node) {
+      String *result = enum_ts_type(enum_node);
       Delete(cpp);
-      return NewString("number");
+      return result;
     }
 
     if (Strcmp(cpp, "bool") == 0) {
@@ -1725,6 +1737,18 @@ protected:
       Parm *copy = NewParm(Getattr(p, "type"), Getattr(p, "name"), source);
       Setattr(copy, "tmap:in:numinputs", "1");
       Swig_typemap_attach_parms("typecheck", copy, 0);
+      if (GetFlag(copy, "tmap:typecheck:wasmjs_enum")) {
+        Node *enum_node = enumLookup(Getattr(copy, "type"));
+        SwigType *base = enum_node ? Getattr(enum_node, "enumbase") : 0;
+        if (base) {
+          Parm *underlying = NewParm(base, 0, source);
+          Swig_typemap_attach_parms("typecheck", underlying, 0);
+          String *precedence = Getattr(underlying, "tmap:typecheck:precedence");
+          if (precedence)
+            Setattr(copy, "tmap:typecheck:precedence", precedence);
+          Delete(underlying);
+        }
+      }
       if (last) {
         set_nextSibling(last, copy);
         Delete(copy);
@@ -4687,14 +4711,35 @@ int WASM_JS::enumvalueDeclaration(Node *n) {
   String *emangle = mangle(enum_cname);
   String *swig_name = NewStringf("swig_enum_%s_%s", emangle, vname);
 
-  String *etype = Getattr(n, "feature:wasmjs:enum_int_type");
-  if (!etype || Len(etype) == 0)
-    etype = NewString("int");
-  Printf(f_cpp_wrappers, "EMSCRIPTEN_KEEPALIVE %s %s() { return (%s)(%s::%s); }\n", etype, swig_name, etype, enum_cname, vname);
+  String *override_type = Getattr(n, "feature:wasmjs:enum_int_type");
+  if (!override_type)
+    override_type = Getattr(parentNode(n), "feature:wasmjs:enum_int_type");
+  SwigType *resolved_override = override_type && Len(override_type) ? SwigType_typedef_resolve_all(override_type) : 0;
+  String *override_cpp = resolved_override ? SwigType_str(resolved_override, 0) : 0;
+  if (override_cpp) {
+    Printf(f_cpp_wrappers,
+           "EMSCRIPTEN_KEEPALIVE EM_VAL %s() { return emscripten::val(static_cast<%s>(%s::%s)).release_ownership(); }\n",
+           swig_name,
+           override_cpp,
+           enum_cname,
+           vname);
+  } else {
+    Printf(f_cpp_wrappers,
+           "EMSCRIPTEN_KEEPALIVE EM_VAL %s() { return swig_wasmjs::enum_conversion<%s>::write(%s::%s).release_ownership(); }\n",
+           swig_name,
+           enum_cname,
+           enum_cname,
+           vname);
+  }
   register_export(Char(swig_name));
-  Printf(enum_js_body, "      %s: M._%s(),\n", jsname, swig_name);
-  if (stubs)
-    Printf(f_stubs_module, "  readonly %s: %s;\n", jsname, Strstr(etype, "long long") ? "bigint" : "number");
+  Printf(enum_js_body, "      %s: __from_handle(M._%s()),\n", jsname, swig_name);
+  if (stubs) {
+    String *type = override_cpp ? cpp_to_ts(override_cpp) : enum_ts_type(parentNode(n));
+    Printf(f_stubs_module, "  readonly %s: %s;\n", jsname, type);
+    Delete(type);
+  }
+  Delete(override_cpp);
+  Delete(resolved_override);
   Delete(swig_name);
   Delete(emangle);
   return Language::enumvalueDeclaration(n);

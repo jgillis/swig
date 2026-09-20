@@ -1092,6 +1092,26 @@ Do not use an instance after deleting it. C++ <tt>long long</tt> and
 ordinary integers use <tt>number</tt>. Strings are transferred as UTF-8.
 </p>
 
+<p>
+Enums follow their C++ underlying type: types up to 32 bits use
+<tt>number</tt>, and 64 bit types use <tt>bigint</tt>. This applies to
+arguments, return values, constants and container elements, with range
+checks on input. TypeScript declarations use the explicit underlying type
+when one is declared. Scoped enums without an explicit base use
+<tt>number</tt>, since their base is <tt>int</tt>. For unscoped enums without
+an explicit base, the compiler selects the underlying type; declarations
+conservatively use <tt>number | bigint</tt>.
+</p>
+
+<p>
+Use <tt>%feature("wasmjs:enum_int_type", "unsigned long long") Operation;</tt>
+to expose an enum's constants as a chosen integer type, for example when
+comparing them with a related API returning 64 bit integer operation codes.
+Integer typedefs are also accepted. This feature changes only the constants
+and their TypeScript declarations; enum arguments, returns and container
+elements continue to follow the C++ underlying type.
+</p>
+
 <H3><a name="Javascript_wasm_containers">30.6.1 Standard library containers</a></H3>
 
 
@@ -1135,7 +1155,9 @@ Maps with <tt>std::string</tt> keys also accept plain JavaScript objects as
 input, using their own enumerable string keys. Returned maps use
 <tt>Map</tt>. Integral elements must have the correct JavaScript type and
 fit the C++ type; 64 bit integers require <tt>bigint</tt>. Invalid element
-types and incorrect fixed array or pair lengths are rejected.
+types and incorrect fixed array or pair lengths are rejected. Finite
+floating-point inputs outside the C++ type's range are rejected; explicit
+JavaScript infinities and <tt>NaN</tt> are preserved.
 </p>
 
 <p>
@@ -1147,7 +1169,8 @@ For example, pass <tt>new example.IntVector()</tt> to a function accepting
 arrays are rejected for these parameters because mutating a temporary C++
 copy would not update the original JavaScript array. Mutable references and
 pointers returned from C++ are borrowed proxies: their native owner must
-remain alive while they are used. Sequence element accessors such as
+remain alive while they are used. A null container pointer returned from
+C++ becomes JavaScript <tt>null</tt>. Sequence element accessors such as
 <tt>at(index)</tt> return values, so changing a returned wrapped class value
 does not modify the stored element; use <tt>set(index, value)</tt> to replace
 it. C++ iterator objects are not exposed.

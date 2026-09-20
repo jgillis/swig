@@ -26,7 +26,10 @@
   try { $result = swig_wasmjs::to_value< $*1_ltype >(*$1).release_ownership(); }
   catch (const swig_wasmjs::conversion_error &error) { SWIG_exception_fail(SWIG_TypeError, error.what()); }
 }
-%typemap(out) TYPE &, TYPE * {
+%typemap(out) TYPE & {
+  $result = SWIG_NewPointerObj((void *)$1, $descriptor, $owner);
+}
+%typemap(out, tsstub_nullable="1") TYPE * {
   $result = SWIG_NewPointerObj((void *)$1, $descriptor, $owner);
 }
 %typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER) TYPE, const TYPE & {
