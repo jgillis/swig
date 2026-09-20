@@ -5985,6 +5985,7 @@ public:
       Delete(type);
       Delete(name);
       Setattr(self, "lname", "O");
+      SetFlag(self, "customdoc:ignore");
       if (parms)
         set_nextSibling(self, parms);
       Setattr(n, "parms", self);

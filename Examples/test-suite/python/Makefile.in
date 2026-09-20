@@ -62,6 +62,7 @@ CPP_TEST_CASES += \
 	python_append \
 	python_builtin \
 	python_customdoc \
+	python_customdoc_director \
 	python_destructor_exception \
 	python_director \
 	python_director_pyobject \

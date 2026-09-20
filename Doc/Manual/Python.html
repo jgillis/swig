@@ -6298,7 +6298,10 @@ The callback is looked up in the named, already loaded module; SWIG does not imp
 It receives the positional arguments and the representation of its return value is
 appended to the <tt>TypeError</tt> as <tt>You have: ...</tt>. Proxy methods include
 <tt>self</tt> among these arguments; builtin bound methods pass <tt>self</tt> separately
-and omit it from the callback arguments. Keyword arguments are not included.
+and omit it from the callback arguments. Proxy director constructors include their
+internal instance argument (<tt>None</tt> for direct construction), while builtin
+constructors omit it. This internal argument is omitted from generated constructor
+prototypes in either mode. Keyword arguments are not included.
 A missing or noncallable callback, or an exception while calling it or formatting its
 result, leaves the original diagnostic unchanged. Other exception types are preserved
 without calling the callback. This feature is disabled by default; use <tt>"0"</tt>

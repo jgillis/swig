@@ -11,6 +11,7 @@ Version 4.6.0 (in progress)
             [Python] Add %feature("customdoc") for templated docstrings and argument
             error prototypes. Templates can format input and returned values separately,
             use typemap documentation types, and group overloads sharing a docstring.
+            Director constructor prototypes omit the internal Python object parameter.
             The feature is opt in and works with proxy, -fastproxy and -builtin wrappers.
             An optional python:customdoc:argtypes callback adds application-specific
             descriptions of rejected arguments without replacing the original exception.

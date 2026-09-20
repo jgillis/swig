@@ -4043,7 +4043,7 @@ String *Language::customdocPrototype(Node *n, const char *style) {
     Parm *next = Getattr(p, "tmap:in:next");
     if (!next)
       next = nextSibling(p);
-    if (!checkAttribute(p, "tmap:in:numinputs", "0") && !checkAttribute(p, "type", "void")) {
+    if (!GetFlag(p, "customdoc:ignore") && !checkAttribute(p, "tmap:in:numinputs", "0") && !checkAttribute(p, "type", "void")) {
       String *type = customdoc_parameter_type(p, "tmap:in:doc");
       String *name = Getattr(p, "tmap:doc:name");
       if (!name)
