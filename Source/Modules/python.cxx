@@ -6174,12 +6174,19 @@ public:
 
     if (pyi_stub) {
       String *variable_annotation = variableAnnotationForStub(n);
-      Printv(stub, tab4, symname, variable_annotation, "\n", NIL);
+      bool readonly = is_immutable(n);
+      if (readonly)
+        Printv(stub, tab4, "@property\n", tab4, "def ", symname, "(self) ->", Char(variable_annotation) + 1, ":\n", NIL);
+      else
+        Printv(stub, tab4, symname, variable_annotation, "\n", NIL);
       if (have_docstring(n)) {
-        String *s = docstring(n, AUTODOC_VAR, tab4);
+        const char *indent = readonly ? tab8 : tab4;
+        String *s = docstring(n, AUTODOC_VAR, indent);
         if (Len(s))
-          Printv(stub, tab4, s, "\n", NIL);
+          Printv(stub, indent, s, "\n", NIL);
       }
+      if (readonly)
+        Printv(stub, tab8, "...\n", NIL);
       Delete(variable_annotation);
     }
 
