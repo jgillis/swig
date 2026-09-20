@@ -19,7 +19,7 @@ widget = classes["Widget"]
 for name in ("readonly_value", "constant_value"):
     prop = next(node for node in widget.body if isinstance(node, ast.FunctionDef) and node.name == name)
     swig_check([decorator.id for decorator in prop.decorator_list], ["property"])
-    swig_check(prop.returns.value, "int")
+    swig_check(ast.literal_eval(prop.returns), "int")
     swig_assert(not any(isinstance(node, ast.AnnAssign) and node.target.id == name for node in widget.body))
 prop = next(node for node in widget.body if getattr(node, "name", None) == "readonly_value")
 swig_check(ast.get_docstring(prop), "A read only value.")
