@@ -4,6 +4,7 @@
 %feature("docstring", "A read only value.") Widget::readonly_value;
 #ifdef SWIGPYTHON
 %feature("python:annotations", "typing");
+%typemap(pytyping, out="int") int, const int "typing.Union[int, float]"
 %feature("python:annotations", "0") Untyped::value;
 #endif
 
