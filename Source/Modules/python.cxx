@@ -2593,6 +2593,12 @@ public:
        however in some cases we must replace the real parameters list with just
        the catch all "*args", see is_pyargs_dispatcher().
      */
+    if (for_stub) {
+      String *typed = Getattr(n, "python:stub:parameters");
+      if (typed)
+        return NewStringf("%s%s%s", in_class ? "self" : "", in_class && Len(typed) ? ", " : "", typed);
+    }
+
     if (is_pyargs_dispatcher(n)) {
       String *parms = NewString("");
       if (in_class)
@@ -2618,6 +2624,46 @@ public:
     Printv(params, _params, NULL);
 
     return params;
+  }
+
+  /* Preserve the typed Python inputs while the final wrapping typemaps are attached. */
+  void cacheStubParameters(Node *n, int allow_kwargs) {
+    if (!pyi_stub || !GetFlag(n, "feature:python:stub:parameters") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING || !is_pyargs_dispatcher(n) ||
+        is_real_overloaded(n) || Getattr(n, "defaultargs"))
+      return;
+
+    ParmList *parms = Getattr(n, "wrap:parms");
+    Swig_typemap_attach_parms("pytyping", parms, 0);
+    String *signature = NewStringEmpty();
+    int index = 0;
+    int position = 0;
+    for (Parm *p = parms; p;) {
+      Parm *next = Getattr(p, "tmap:in") ? Getattr(p, "tmap:in:next") : nextSibling(p);
+      if (!checkAttribute(p, "tmap:in:numinputs", "0") && !Equal(Getattr(p, "type"), "void")) {
+        ++position;
+        if (!Getattr(p, "self")) {
+          if (SwigType_isvarargs(Getattr(p, "type"))) {
+            Delete(signature);
+            return;
+          }
+          String *type = lookupPytyping(p);
+          String *name = allow_kwargs ? makeParameterName(n, p, position) : NewStringf("__arg%d", index + 1);
+          if (index++)
+            Append(signature, ", ");
+          Printf(signature, "%s: \"%s\"", name, type ? type : "typing.Any");
+          if (Getattr(p, "value"))
+            Append(signature, " = ...");
+          Delete(name);
+          Delete(type);
+        }
+      }
+      p = next;
+    }
+    Setattr(n, "python:stub:parameters", signature);
+    Delete(signature);
+    String *result = rawReturnAnnotation(n, TYPE_ANNOTATION_TYPING);
+    Setattr(n, "python:stub:parameters:return", result ? result : "typing.Any");
+    Delete(result);
   }
 
   /* ------------------------------------------------------------
@@ -2928,7 +2974,11 @@ public:
     if (anno == TYPE_ANNOTATION_NONE)
       return NewStringEmpty();
 
-    String *ret = rawReturnAnnotation(n, anno);
+    Node *source = Getattr(n, "defaultargs");
+    if (!source)
+      source = n;
+    String *cached = Getattr(source, "python:stub:parameters:return");
+    String *ret = cached ? Copy(cached) : rawReturnAnnotation(n, anno);
 
     /* Overloads which do not agree on what they return are described by typing.Any, but
        there is no C/C++ type meaning the same, so those say nothing at all instead. */
@@ -4157,6 +4207,8 @@ public:
     } else {
       Replaceall(f->code, "$self", "obj0");
     }
+
+    cacheStubParameters(n, allow_kwargs);
 
     /* Dump the function out */
     Wrapper_print(f, f_wrappers);
