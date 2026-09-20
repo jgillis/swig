@@ -1,4 +1,4 @@
-%module python_pyi_parameters
+%module(directors="1") python_pyi_parameters
 %feature("python:annotations", "typing");
 %feature("python:stub:parameters");
 %feature("compactdefaultargs");
@@ -38,4 +38,38 @@ public:
   static int make(int value = default_number()) { return value; }
   int value;
 };
+%}
+
+%feature("director") DirectorEmpty;
+%feature("director") DirectorDefault;
+%feature("director") DirectorParam;
+%feature("director") DirectorCopy;
+%typemap(pytyping) const DirectorCopy &, DirectorCopy * "DirectorCopy"
+%ignore DirectorCopy::DirectorCopy();
+%newobject make_director_copy;
+%inline %{
+struct DirectorEmpty {
+  DirectorEmpty() {}
+  virtual ~DirectorEmpty() {}
+  virtual int get() const { return 1; }
+};
+struct DirectorDefault {
+  DirectorDefault(int input_value = default_number()) : value(input_value) {}
+  virtual ~DirectorDefault() {}
+  virtual int get() const { return value; }
+  int value;
+};
+struct DirectorParam {
+  DirectorParam(int input_value) : value(input_value) {}
+  virtual ~DirectorParam() {}
+  virtual int get() const { return value; }
+  int value;
+};
+struct DirectorCopy {
+  DirectorCopy() {}
+  DirectorCopy(const DirectorCopy &) {}
+  virtual ~DirectorCopy() {}
+  virtual int get() const { return 2; }
+};
+DirectorCopy *make_director_copy() { return new DirectorCopy(); }
 %}

@@ -28,3 +28,21 @@ w.size1(1)  # type: ignore
 w.keyword(value="wrong")  # type: ignore
 m.Widget.make("wrong")  # type: ignore
 m.Widget("wrong")  # type: ignore
+
+from python_pyi_parameters import DirectorEmpty, DirectorDefault, DirectorParam, DirectorCopy, make_director_copy
+
+class DerivedEmpty(DirectorEmpty):
+    def __init__(self) -> None:
+        super().__init__()
+
+empty_director = DirectorEmpty()
+default_director = DirectorDefault()
+parameter_director = DirectorDefault(3)
+required_director = DirectorParam(4)
+copied_director = DirectorCopy(make_director_copy())
+DirectorEmpty(1)  # type: ignore
+DirectorDefault("wrong")  # type: ignore
+DirectorDefault(1, 2)  # type: ignore
+DirectorParam()  # type: ignore
+DirectorParam("wrong")  # type: ignore
+DirectorCopy(1)  # type: ignore

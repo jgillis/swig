@@ -42,3 +42,38 @@ for name in ("__init__", "size1", "keyword", "make"):
     swig_assert(methods[name].args.vararg is None, "Explicit parameters missing for " + name)
 swig_check([arg.arg for arg in methods["size1"].args.args], ["self"])
 swig_check([arg.arg for arg in methods["keyword"].args.args], ["self", "value"])
+
+class DerivedEmpty(m.DirectorEmpty):
+    def __init__(self):
+        super().__init__()
+
+class DerivedDefault(m.DirectorDefault):
+    def __init__(self, *args):
+        super().__init__(*args)
+
+class DerivedParam(m.DirectorParam):
+    def __init__(self, value):
+        super().__init__(value)
+
+class DerivedCopy(m.DirectorCopy):
+    def __init__(self, value):
+        super().__init__(value)
+
+swig_check(DerivedEmpty().get(), 1)
+swig_check(DerivedDefault().get(), 7)
+swig_check(DerivedDefault(3).get(), 3)
+swig_check(DerivedParam(4).get(), 4)
+swig_check(DerivedCopy(m.make_director_copy()).get(), 2)
+with swig_assert_raises(TypeError):
+    m.DirectorEmpty(1)
+with swig_assert_raises(TypeError):
+    m.DirectorDefault("wrong")
+with swig_assert_raises(TypeError):
+    m.DirectorParam()
+with swig_assert_raises(TypeError):
+    m.DirectorCopy(1)
+for name, count in (("DirectorEmpty", 1), ("DirectorDefault", 2), ("DirectorParam", 2), ("DirectorCopy", 2)):
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == name)
+    ctor = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+    swig_check(len(ctor.args.args), count)
+    swig_assert(ctor.args.vararg is None, "Director constructor must have explicit arguments")

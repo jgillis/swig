@@ -12,6 +12,7 @@ Version 4.6.0 (in progress)
             typed parameters in .pyi files for functions with one signature using
             compactdefaultargs or nonliteral defaults. Default values are written
             as ..., and the generated runtime wrappers are unchanged.
+            Director constructor stubs omit the internal Python instance argument.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are
