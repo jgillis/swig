@@ -5,6 +5,12 @@
 #endif
 %ignore Hidden;
 %rename(Renamed) Original;
+#ifdef SWIGCSHARP
+// C# constant expressions need C# suffixes and the renamed enumerator.
+%csconstvalue("(-9223372036854775807L - 1)") SignedWide::Low;
+%csconstvalue("(1UL << 63)") UnsignedWide::Middle;
+%csconstvalue("Renamed") Alias;
+#endif
 %inline %{
 #include <limits>
 enum Ordinary { First = -2, Hidden = 12, Next, Original = 0x20, Alias = Original, Expression = (1 << 8) };
