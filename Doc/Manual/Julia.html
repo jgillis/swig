@@ -29,7 +29,8 @@
 The experimental <tt>-julia</tt> target generates a C++ wrapper with a C calling
 interface and a Julia module that calls it using <tt>ccall</tt>.
 It requires a C++11 compiler and Julia development headers. The initial runtime
-tests use Julia 1.6. Build the wrapper against the Julia installation that will
+tests run on Julia 1.6.2 and 1.13.0; Julia 1.12.6 has also been validated locally.
+Build the wrapper against the Julia installation that will
 load it; compatibility of a compiled wrapper across Julia versions is not promised.
 </p>
 

@@ -27,7 +27,11 @@ permissions:
 
 jobs:
   runtime:
-    name: Julia 1.6.2 runtime tests
+    name: Julia ${{ matrix.julia-version }} runtime tests
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.6.2', '1.13.0']
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
@@ -37,7 +41,7 @@ jobs:
           persist-credentials: false
       - uses: julia-actions/setup-julia@v3
         with:
-          version: '1.6.2'
+          version: ${{ matrix.julia-version }}
       - name: Install build dependencies
         run: |
           sudo apt-get update
