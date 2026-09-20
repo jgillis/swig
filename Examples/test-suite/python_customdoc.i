@@ -4,6 +4,9 @@
 %feature("customdoc", "1");
 %feature("python:customdoc:argtypes", "python_customdoc.describe_arguments");
 %feature("python:customdoc:argtypes", "swig_customdoc_unloaded.describe") repeated;
+%feature("python:customdoc:argtypes", "0") disabled_description;
+%feature("python:customdoc:argtypes", "0") empty_description;
+%feature("python:customdoc:argtypes", "") empty_description;
 %feature("customdoc:main", "$name: $brief\n$overview$main");
 %feature("customdoc:arg:normal:style_error", "$type");
 %feature("customdoc:arg:only:out", "$type");
@@ -106,4 +109,6 @@ int unnamed(int, int) { return 0; }
 #endif
 %inline %{
 void fail_zero() {}
+int disabled_description(int value) { return value; }
+int empty_description(int value) { return value; }
 %}

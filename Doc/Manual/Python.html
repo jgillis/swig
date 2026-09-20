@@ -6301,8 +6301,9 @@ appended to the <tt>TypeError</tt> as <tt>You have: ...</tt>. Proxy methods incl
 and omit it from the callback arguments. Keyword arguments are not included.
 A missing or noncallable callback, or an exception while calling it or formatting its
 result, leaves the original diagnostic unchanged. Other exception types are preserved
-without calling the callback. This feature is disabled by default; use an empty value
-or <tt>"0"</tt> to disable an inherited setting for a declaration.
+without calling the callback. This feature is disabled by default; use <tt>"0"</tt>
+to disable an inherited setting for a declaration. An empty value clears a local
+setting, restoring any inherited callback.
 </p>
 
 <H3><a name="Python_doxygen_docstrings">35.10.5 Doxygen comments</a></H3>

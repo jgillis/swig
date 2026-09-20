@@ -51,6 +51,7 @@ swig_assert("unnamed(integer 0/1, integer 1/2)" in m.unnamed.__doc__)
 
 # Diagnostics must not consume borrowed arguments or replace real exceptions.
 import sys
+import inspect
 
 swig_assert("swig_customdoc_unloaded" not in sys.modules)
 failure_message(m.repeated, object(), TypeError)
@@ -125,7 +126,11 @@ instance = m.Example(1)
 failure_message(instance.method, token, TypeError)
 received = seen.pop()
 # Builtin bound methods take self separately; proxy methods pass it explicitly.
-swig_assert(received == (token,) or received == (instance, token))
+swig_check(received, (token,) if inspect.isbuiltin(instance.method) else (instance, token))
+swig_assert("You have:" not in failure_message(m.disabled_description, token, TypeError))
+swig_check(seen, [])
+swig_assert("You have:" in failure_message(m.empty_description, token, TypeError))
+swig_check(seen.pop(), (token,))
 
 # The callback may remove its own module attribute while running.
 def remove_callback(*args):
