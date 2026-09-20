@@ -2130,15 +2130,17 @@ public:
         Printf(basecall, "Swig::DirectorPureVirtualException(\"%s::%s\")", classname, name);
       }
       Printf(w->code,
+             "  swig_jl_gc_scope __gc_scope;\n"
              "  jl_value_t *__self = swig_get_self();\n"
              "  jl_value_t *__f = Swig::swig_director_fn(\"%s\");\n",
              dispatch);
       Printf(w->code, "  if (__self && __f) {\n");
       Printf(w->code, "    jl_value_t **__jargs;\n");
-      Printf(w->code, "    JL_GC_PUSHARGS(__jargs, %d);\n", nargs + 1);
+      Printf(w->code, "    JL_GC_PUSHARGS(__jargs, %d);\n", nargs + 2);
       Printf(w->code, "    __jargs[0] = __self;\n");
       Printv(w->code, args_build, NIL);
       Printf(w->code, "    jl_value_t *__r = jl_call(__f, __jargs, %d);\n", nargs + 1);
+      Printf(w->code, "    __jargs[%d] = __r;\n", nargs + 1);
       /* upcall raised: surface the Julia exception's own message to C++ */
       Printf(w->code,
              "    if (!__r) {\n"

@@ -68,7 +68,7 @@ namespace Swig {
     return msg;
   }
 
-  /* Base for every SwigDirector_<C>: holds + GC-roots the Julia self object. */
+  /* Each native director gets its own root, including directors sharing a callback object. */
   class Director {
   protected:
     jl_value_t *swig_self;
@@ -76,16 +76,21 @@ namespace Swig {
     Director(jl_value_t *self) : swig_self(self) {
       if (swig_self) {
         jl_value_t *d = swig_director_roots();
-        JL_GC_PUSH1(&d);
-        jl_call3(jl_get_function(jl_base_module, "setindex!"), d, jl_box_int64(1), swig_self);
+        jl_value_t *key = 0;
+        JL_GC_PUSH2(&d, &key);
+        key = jl_box_voidpointer(this);
+        jl_value_t *result = jl_call3(jl_get_function(jl_base_module, "setindex!"), d, swig_self, key);
         JL_GC_POP();
+        if (!result) throw std::runtime_error("unable to retain Julia director callback");
       }
     }
     virtual ~Director() {
       if (swig_self) {
         jl_value_t *d = swig_director_roots();
-        JL_GC_PUSH1(&d);
-        jl_call2(jl_get_function(jl_base_module, "delete!"), d, swig_self);
+        jl_value_t *key = 0;
+        JL_GC_PUSH2(&d, &key);
+        key = jl_box_voidpointer(this);
+        jl_call2(jl_get_function(jl_base_module, "delete!"), d, key);
         JL_GC_POP();
       }
     }

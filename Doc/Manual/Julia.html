@@ -182,7 +182,10 @@ Callback code must run on a thread already supported by the Julia runtime.
 The initial director typemaps cover scalar and string arguments and returns.
 Integer overrides return <tt>Int64</tt>, floating point overrides return
 <tt>Float64</tt>, and Boolean overrides return <tt>Bool</tt>.
-An exception or a wrong return type from a callback becomes <tt>SwigError</tt>.
+An exception, a wrong return type, or an integer return value outside the native
+type's range becomes <tt>SwigError</tt>. Integer callback arguments use
+<tt>Int64</tt>; unsigned native arguments larger than <tt>typemax(Int64)</tt>
+are rejected.
 Parameterized director constructors and general container director typemaps
 are not implemented.
 </p>

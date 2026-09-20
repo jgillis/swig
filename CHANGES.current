@@ -11,6 +11,8 @@ Version 4.6.0 (in progress)
             [Julia] Add an experimental -julia target generating C++ wrappers and
             Julia modules with class proxies, overloaded functions, ownership
             handling, exception translation, initial STL conversions and directors.
+            Director callbacks retain shared callback objects independently, check
+            integer return ranges and preserve embedded zeros in strings.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are

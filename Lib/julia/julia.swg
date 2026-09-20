@@ -96,15 +96,24 @@ JULIA_INTEGER(size_t, Csize_t)
  * assigns $result.  Class/container bridges are supplied per-type by the
  * interface .i (the matcher does not generalise instantiated templates). */
 %typemap(directorin)  bool        %{ $input = jl_box_bool($1 ? 1 : 0); %}
-%typemap(directorin)  int, long, long long, short, size_t, unsigned int, unsigned long, unsigned short
+%typemap(directorin)  int, long, long long, short
                                    %{ $input = jl_box_int64((int64_t)$1); %}
+%typemap(directorin)  size_t, unsigned int, unsigned long, unsigned short %{
+  if ((uint64_t)$1 > (uint64_t)std::numeric_limits<int64_t>::max())
+    throw std::runtime_error("integer director argument is out of range");
+  $input = jl_box_int64((int64_t)$1);
+%}
 %typemap(directorin)  double, float %{ $input = jl_box_float64((double)$1); %}
-%typemap(directorin)  std::string, const std::string& %{ $input = jl_cstr_to_string(std::string($1).c_str()); %}
+%typemap(directorin)  std::string, const std::string& %{ $input = jl_pchar_to_string(($1).data(), ($1).size()); %}
 %typemap(directorin)  char *, const char * %{ $input = jl_cstr_to_string($1 ? $1 : ""); %}
 
 %typemap(directorout) bool %{ if (!jl_typeis($input, jl_bool_type)) { throw std::runtime_error("expected Bool director result"); } $result = jl_unbox_bool($input) != 0; %}
 %typemap(directorout) int, long, long long, short, size_t, unsigned int, unsigned long, unsigned short
-                                   %{ if (!jl_typeis($input, jl_int64_type)) { throw std::runtime_error("expected Int64 director result"); } $result = ($1_ltype)jl_unbox_int64($input); %}
+                                   %{
+  if (!jl_typeis($input, jl_int64_type)) throw std::runtime_error("expected Int64 director result");
+  if (!SWIG_IsOK(swig_jl_asval($input, &$result)))
+    throw std::runtime_error("integer director result is out of range");
+%}
 %typemap(directorout) double, float %{ if (!jl_typeis($input, jl_float64_type)) { throw std::runtime_error("expected Float64 director result"); } $result = ($1_ltype)jl_unbox_float64($input); %}
 %typemap(directorout) std::string %{ if (!jl_is_string($input)) { throw std::runtime_error("expected String director result"); } $result = std::string(jl_string_ptr($input), jl_string_len($input)); %}
 
