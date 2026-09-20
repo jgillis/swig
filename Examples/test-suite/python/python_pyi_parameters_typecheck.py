@@ -56,3 +56,8 @@ m.typemap_default_keyword(typemap_value="wrong")  # type: ignore
 
 keyword_director = m.DirectorKeyword(arg2=3)
 m.DirectorKeyword(arg1=3)  # type: ignore
+
+extended_qualified: str = m.Extended.qualified()
+extended_bare: str = m.Extended.bare()
+extended_instance: str = m.Extended().instance("text")
+m.Extended().instance(None)  # type: ignore

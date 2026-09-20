@@ -84,3 +84,19 @@ struct DirectorCopy {
 };
 DirectorCopy *make_director_copy() { return new DirectorCopy(); }
 %}
+
+// Named annotations must use the member name, not the generated %extend helper.
+%typemap(pytyping) const char *named_annotations::Extended::qualified "str"
+%typemap(pytyping) const char *bare "str"
+%typemap(pytyping, out="str") const char *named_annotations::Extended::instance "typing.Optional[str]"
+%typemap(pytyping) const char *text "str"
+%inline %{
+namespace named_annotations {
+  struct Extended {};
+}
+%}
+%extend named_annotations::Extended {
+  static const char *qualified() { return "qualified"; }
+  static const char *bare() { return "bare"; }
+  const char *instance(const char *text) { return text; }
+}

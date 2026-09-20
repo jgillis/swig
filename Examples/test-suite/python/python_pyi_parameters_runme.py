@@ -88,3 +88,12 @@ with swig_assert_raises(TypeError):
 cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DirectorKeyword")
 ctor = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
 swig_check([arg.arg for arg in ctor.args.args], ["self", "arg2"])
+
+swig_check(m.Extended.qualified(), "qualified")
+swig_check(m.Extended.bare(), "bare")
+swig_check(m.Extended().instance("text"), "text")
+cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Extended")
+methods = {node.name: node for node in cls.body if isinstance(node, ast.FunctionDef)}
+for name in ("qualified", "bare", "instance"):
+    swig_check(ast.literal_eval(methods[name].returns), "str")
+swig_check(ast.literal_eval(methods["instance"].args.args[1].annotation), "str")
