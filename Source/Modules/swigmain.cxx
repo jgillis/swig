@@ -43,6 +43,7 @@ Language *swig_r(void);
 Language *swig_ruby(void);
 Language *swig_scilab(void);
 Language *swig_tcl(void);
+Language *swig_wasm_js(void);
 Language *swig_xml(void);
 }
 
@@ -79,6 +80,7 @@ static TargetLanguageModule modules[] = {
   {"-tcl",        swig_tcl,        NULL,                 Supported   },
   {"-tcl8",       swig_tcl,        "Tcl 8",              Supported   },
   {"-uffi",       NULL,            "Common Lisp / UFFI", Disabled    },
+  {"-wasm-js",    swig_wasm_js,    "WebAssembly JavaScript", Experimental},
   {"-xml",        swig_xml,        "XML",                Supported   },
   {NULL,          NULL,            NULL,                 Disabled    }
 };

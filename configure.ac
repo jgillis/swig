@@ -2779,6 +2779,7 @@ AC_CONFIG_FILES([
     Examples/test-suite/ruby/Makefile
     Examples/test-suite/scilab/Makefile
     Examples/test-suite/tcl/Makefile
+    Examples/test-suite/wasm_js/Makefile
     Source/Makefile
     Tools/javascript/Makefile
 ])

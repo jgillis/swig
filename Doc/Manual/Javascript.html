@@ -46,6 +46,7 @@
 <li><a href="#Javascript_jsc_exceptions">Handling Exceptions in JavascriptCore</a>
 <li><a href="#Javascript_napi_exceptions">Handling Exceptions in Node-API</a>
 </ul>
+<li><a href="#Javascript_wasm">Experimental WebAssembly target</a>
 </ul>
 </div>
 <!-- INDEX -->
@@ -1037,5 +1038,71 @@ if(js_exception)
 </pre>
 </div>
 <p>In this case, nothing else is needed for the C++ exceptions to be passed to JavaScript.</p>
+<H2><a name="Javascript_wasm">30.6 Experimental WebAssembly target</a></H2>
+
+
+<p>
+The experimental <tt>-wasm-js</tt> target generates C++ wrappers for Emscripten
+and a CommonJS JavaScript module for Node.js. It is separate from the native
+<tt>-javascript</tt> target. The generated JavaScript calls WebAssembly exports;
+Emscripten's Embind value support is also required to transfer JavaScript objects.
+The target currently requires C++ input, a wasm32 Emscripten toolchain, and a
+JavaScript runtime supporting BigInt and FinalizationRegistry.
+</p>
+
+<p>
+For an interface named <tt>example.i</tt>, generate and compile the wrappers:
+</p>
+
+<div class="shell"><pre>
+$ swig -c++ -wasm-js -stubs -o example_wrap.cxx example.i
+$ em++ -fwasm-exceptions -lembind example_wrap.cxx \
+    -sMODULARIZE=1 -sEXPORT_NAME=createWasm \
+    -sEXPORTED_FUNCTIONS=@example_wrap.cxx.exports \
+    -sEXPORTED_RUNTIME_METHODS='["UTF8ToString","lengthBytesUTF8","stringToUTF8"]' \
+    -o example_wrap_wasm.js
+</pre></div>
+
+<p>
+SWIG writes <tt>example_wrap.cxx</tt>, <tt>example_wrap.cxx.exports</tt> and
+<tt>example_wrap.js</tt>. The optional <tt>-stubs</tt> flag also writes
+<tt>example_wrap.d.ts</tt>. Keep these JavaScript files and the compiled
+<tt>example_wrap_wasm.wasm</tt> file together. Load the module asynchronously:
+</p>
+
+<div class="targetlang"><pre>
+const createModule = require('./example_wrap.js');
+async function main() {
+  const example = await createModule();
+  console.log(example.add(2, 3));
+}
+main().catch(console.error);
+</pre></div>
+
+<p>
+Wrapped classes support construction with <tt>new</tt> or a direct call.
+Call <tt>delete()</tt> to release an owned instance promptly. A finalization
+registry also releases owned instances when the runtime collects them.
+Do not use an instance after deleting it. C++ <tt>long long</tt> and
+<tt>unsigned long long</tt> values use JavaScript <tt>bigint</tt>;
+ordinary integers use <tt>number</tt>. Strings are transferred as UTF-8.
+</p>
+
+<p>
+This target is experimental. It does not yet provide the complete typemap
+library or feature coverage of the native JavaScript target. In particular,
+global variables, constants, static member variables, <tt>%extend</tt>,
+multi module imports, and general standard
+library containers are not supported. Uncaught C++ exceptions propagate as
+WebAssembly exceptions. Browser module packaging is not provided.
+</p>
+
+<p>
+The initial runtime and TypeScript regression tests can be run with
+<tt>make check-wasm-js-test-suite</tt>. This requires <tt>em++</tt>,
+<tt>node</tt>, and <tt>tsc</tt> on PATH. The make variables <tt>EMCXX</tt>,
+<tt>NODE</tt>, <tt>TSC</tt>, and <tt>EMCXXFLAGS</tt> can override those defaults.
+</p>
+
 </body>
 </html>
