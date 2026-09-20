@@ -3248,6 +3248,103 @@ public:
     }
   }
 
+  /* Cache an overload while its wrapped parameter and return types are available. */
+  void cacheOverloadStub(Node *n) {
+    if (!pyi_stub || !GetFlag(n, "feature:python:stub:overloads") || !Getattr(n, "sym:overloaded") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING ||
+        Getattr(n, "defaultargs"))
+      return;
+
+    ParmList *parms = Getattr(n, "wrap:parms");
+    Swig_typemap_attach_parms("pytyping", parms, 0);
+    String *signature = NewStringEmpty();
+    int index = 0;
+    for (Parm *p = parms; p;) {
+      Parm *next = Getattr(p, "tmap:in") ? Getattr(p, "tmap:in:next") : nextSibling(p);
+      if (!Getattr(p, "self") && !checkAttribute(p, "tmap:in:numinputs", "0") && !Equal(Getattr(p, "type"), "void")) {
+        if (SwigType_isvarargs(Getattr(p, "type"))) {
+          Delete(signature);
+          return;
+        }
+        String *type = lookupPytyping(p);
+        if (index)
+          Append(signature, ", ");
+        Printf(signature, "__arg%d: \"%s\"", ++index, type ? type : "typing.Any");
+        if (Getattr(p, "value"))
+          Append(signature, " = ...");
+        Delete(type);
+      }
+      p = next;
+    }
+    Setattr(n, "python:stub:overload:parms", signature);
+    Delete(signature);
+    String *result = rawReturnAnnotation(n, TYPE_ANNOTATION_TYPING);
+    Setattr(n, "python:stub:overload:return", result ? result : "typing.Any");
+    Delete(result);
+  }
+
+  /* Emit opt-in overload declarations in the order used by runtime dispatch. */
+  bool emitOverloadStubs(Node *n, File *destination, const String *name, const String *indent, bool instance, bool is_static, bool constructor) {
+    if (!GetFlag(n, "feature:python:stub:overloads") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING || !is_real_overloaded(n))
+      return false;
+    List *ranked = Swig_overload_rank(n, true);
+    if (!ranked)
+      return false;
+    List *signatures = NewList();
+    Hash *returns = NewHash();
+    bool complete = true;
+    for (Iterator it = First(ranked); it.item; it = Next(it)) {
+      Node *overload = it.item;
+      if (Getattr(overload, "defaultargs"))
+        continue;
+      String *params = Getattr(overload, "python:stub:overload:parms");
+      String *result = constructor ? NewString("None") : Copy(Getattr(overload, "python:stub:overload:return"));
+      if (!params || !result) {
+        Delete(result);
+        complete = false;
+        break;
+      }
+      List *types = Getattr(returns, params);
+      if (!types) {
+        types = NewList();
+        Setattr(returns, params, types);
+        Append(signatures, params);
+        Delete(types);
+      }
+      bool duplicate = false;
+      for (Iterator rt = First(types); rt.item; rt = Next(rt))
+        if (Equal(rt.item, result))
+          duplicate = true;
+      if (!duplicate)
+        Append(types, result);
+      Delete(result);
+    }
+    if (complete && Len(signatures)) {
+      for (Iterator it = First(signatures); it.item; it = Next(it)) {
+        String *params = it.item;
+        List *types = Getattr(returns, params);
+        Printf(destination, "\n%s", indent);
+        if (Len(signatures) > 1)
+          Printf(destination, "@typing.overload\n%s", indent);
+        if (is_static)
+          Printf(destination, "@staticmethod\n%s", indent);
+        Printf(destination, "def %s(%s%s%s) -> \"", name, instance ? "self" : "", instance && Len(params) ? ", " : "", params);
+        if (Len(types) > 1)
+          Append(destination, "typing.Union[");
+        for (int i = 0; i < Len(types); ++i)
+          Printf(destination, "%s%s", i ? ", " : "", Getitem(types, i));
+        if (Len(types) > 1)
+          Append(destination, "]");
+        Printf(destination, "\":\n%s    ...\n", indent);
+      }
+    } else {
+      complete = false;
+    }
+    Delete(signatures);
+    Delete(returns);
+    Delete(ranked);
+    return complete;
+  }
+
   /* ------------------------------------------------------------
    * emitFunctionStubHelper()
    *
@@ -3256,6 +3353,8 @@ public:
    * ------------------------------------------------------------ */
 
   void emitFunctionStubHelper(Node *n, File *f_dest, String *name, int kw) {
+    if (emitOverloadStubs(n, f_dest, name, "", false, false, false))
+      return;
     emitFunctionHeaderHelper(n, f_dest, name, kw, true);
     Printv(f_dest, tab4, "...\n", NIL);
   }
@@ -3270,6 +3369,10 @@ public:
    * ------------------------------------------------------------ */
 
   void emitStaticMethodStubHelper(Node *n, String *symname, int kw) {
+    if (GetFlag(n, "feature:python:stub:overloads") && Getattr(n, "sym:nextSibling"))
+      return;
+    if (emitOverloadStubs(n, stub, symname, tab4, false, true, false))
+      return;
     String *parms = make_pyParmList(n, false, false, kw, false, true);
     Printv(stub, "\n", tab4, "@staticmethod", NIL);
     Printv(stub, "\n", tab4, "def ", symname, "(", parms, ")", returnTypeAnnotationForStubFile(n), ":\n", NIL);
@@ -4157,6 +4260,8 @@ public:
     } else {
       Replaceall(f->code, "$self", "obj0");
     }
+
+    cacheOverloadStub(n);
 
     /* Dump the function out */
     Wrapper_print(f, f_wrappers);
@@ -5822,7 +5927,7 @@ public:
         Delete(fullname);
       }
 
-      if (pyi_stub) {
+      if (pyi_stub && !emitOverloadStubs(n, stub, symname, tab4, true, false, false)) {
         String *stub_parms = make_pyParmList(n, true, false, allow_kwargs, false, true);
         Printv(stub, "\n", tab4, "def ", symname, "(", stub_parms, ")", returnTypeAnnotationForStubFile(n), ":\n", NIL);
         if (Node *node_with_doc = find_overload_with_docstring(n))
@@ -6059,7 +6164,7 @@ public:
         Delete(subfunc);
       }
 
-      if (pyi_stub && add_init) {
+      if (pyi_stub && add_init && !emitOverloadStubs(n, stub, "__init__", tab4, true, false, true)) {
         String *parms = make_pyParmList(n, true, false, allow_kwargs, false, true);
         /* __init__ always returns None in Python, so it never carries a return annotation. */
         Printv(stub, "\n", tab4, "def __init__(", parms, "):\n", NIL);
