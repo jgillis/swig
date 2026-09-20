@@ -2574,9 +2574,10 @@ AC_ARG_VAR([WASM_NODE], [Node.js interpreter for WebAssembly tests])
 AC_ARG_VAR([WASM_TSC], [TypeScript compiler for WebAssembly declarations])
 SKIP_WASM_JS=1
 if test "x$with_wasm_js" != xno; then
-  AC_CHECK_PROGS([EMCXX], [em++])
-  AC_CHECK_PROGS([WASM_NODE], [node nodejs])
-  AC_CHECK_PROGS([WASM_TSC], [tsc])
+  # Use resolved paths: GNU make can mistake the emsdk node directory on PATH for the interpreter.
+  AC_PATH_PROGS([EMCXX], [em++])
+  AC_PATH_PROGS([WASM_NODE], [node nodejs])
+  AC_PATH_PROGS([WASM_TSC], [tsc])
   if test -n "$EMCXX" && test -n "$WASM_NODE" && test -n "$WASM_TSC"; then
     SKIP_WASM_JS=
   fi
