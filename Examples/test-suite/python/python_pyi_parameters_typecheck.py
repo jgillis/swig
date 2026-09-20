@@ -46,3 +46,13 @@ DirectorDefault(1, 2)  # type: ignore
 DirectorParam()  # type: ignore
 DirectorParam("wrong")  # type: ignore
 DirectorCopy(1)  # type: ignore
+
+typemap_default: int = m.typemap_default()
+typemap_argument: int = m.typemap_default(4)
+typemap_keyword_default: int = m.typemap_default_keyword()
+typemap_keyword: int = m.typemap_default_keyword(typemap_value=5)
+m.typemap_default("wrong")  # type: ignore
+m.typemap_default_keyword(typemap_value="wrong")  # type: ignore
+
+keyword_director = m.DirectorKeyword(arg2=3)
+m.DirectorKeyword(arg1=3)  # type: ignore

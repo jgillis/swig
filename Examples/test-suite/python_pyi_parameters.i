@@ -6,6 +6,8 @@
 %feature("compactdefaultargs", "0") combined_default;
 %feature("python:stub:parameters", "0") broad;
 %feature("kwargs") keywords;
+%feature("kwargs") typemap_default_keyword;
+%typemap(default) int typemap_value "$1 = 13;"
 %feature("kwargs") Widget::keyword;
 %include <std_string.i>
 %include <typemaps.i>
@@ -20,6 +22,8 @@
 %inline %{
 int default_number() { return 7; }
 int size1() { return 3; }
+int typemap_default(int typemap_value) { return typemap_value; }
+int typemap_default_keyword(int typemap_value) { return typemap_value; }
 int compact(int value, int extra = default_number()) { return value + extra; }
 std::string plain(std::string value = std::string("ready")) { return value; }
 int keywords(int value, int extra = default_number()) { return value + extra; }
@@ -44,6 +48,8 @@ public:
 %feature("director") DirectorDefault;
 %feature("director") DirectorParam;
 %feature("director") DirectorCopy;
+%feature("director") DirectorKeyword;
+%feature("kwargs") DirectorKeyword::DirectorKeyword;
 %typemap(pytyping) const DirectorCopy &, DirectorCopy * "DirectorCopy"
 %ignore DirectorCopy::DirectorCopy();
 %newobject make_director_copy;
@@ -64,6 +70,11 @@ struct DirectorParam {
   virtual ~DirectorParam() {}
   virtual int get() const { return value; }
   int value;
+};
+struct DirectorKeyword {
+  DirectorKeyword(int = 7) {}
+  virtual ~DirectorKeyword() {}
+  virtual int get() const { return 1; }
 };
 struct DirectorCopy {
   DirectorCopy() {}

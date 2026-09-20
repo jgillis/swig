@@ -2,6 +2,10 @@ import ast
 import python_pyi_parameters as m
 from swig_test_utils import swig_assert, swig_assert_raises, swig_check
 
+swig_check(m.typemap_default(), 13)
+swig_check(m.typemap_default(4), 4)
+swig_check(m.typemap_default_keyword(), 13)
+swig_check(m.typemap_default_keyword(typemap_value=5), 5)
 swig_check(m.size1(), 3)
 swig_check(m.compact(2), 9)
 swig_check(m.compact(2, 4), 6)
@@ -33,7 +37,7 @@ swig_check(len(functions["output"].args.args), 0)
 swig_check(len(functions["grouped"].args.args), 1)
 swig_check(ast.literal_eval(functions["output"].returns), "int")
 swig_check([arg.arg for arg in functions["keywords"].args.args], ["value", "extra"])
-for name in ("compact", "plain", "keywords"):
+for name in ("compact", "plain", "keywords", "typemap_default", "typemap_default_keyword"):
     default = functions[name].args.defaults[0]
     swig_assert(type(default) is type(ast.parse("...").body[0].value), "Defaults must be ellipses")
 widget = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Widget")
@@ -77,3 +81,10 @@ for name, count in (("DirectorEmpty", 1), ("DirectorDefault", 2), ("DirectorPara
     ctor = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
     swig_check(len(ctor.args.args), count)
     swig_assert(ctor.args.vararg is None, "Director constructor must have explicit arguments")
+
+swig_check(m.DirectorKeyword(arg2=3).get(), 1)
+with swig_assert_raises(TypeError):
+    m.DirectorKeyword(arg1=3)
+cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DirectorKeyword")
+ctor = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+swig_check([arg.arg for arg in ctor.args.args], ["self", "arg2"])

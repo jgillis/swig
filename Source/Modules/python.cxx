@@ -2634,12 +2634,13 @@ public:
 
     ParmList *parms = Getattr(n, "wrap:parms");
     /* constructorHandler prepends the Python instance for director construction. */
-    if (Equal(nodeType(n), "constructor") && Swig_directorclass(n))
+    bool director_constructor = Equal(nodeType(n), "constructor") && Swig_directorclass(n);
+    if (director_constructor)
       parms = nextSibling(parms);
     Swig_typemap_attach_parms("pytyping", parms, 0);
     String *signature = NewStringEmpty();
     int index = 0;
-    int position = 0;
+    int position = director_constructor ? 1 : 0;
     for (Parm *p = parms; p;) {
       Parm *next = Getattr(p, "tmap:in") ? Getattr(p, "tmap:in:next") : nextSibling(p);
       if (!checkAttribute(p, "tmap:in:numinputs", "0") && !Equal(Getattr(p, "type"), "void")) {
@@ -2654,7 +2655,7 @@ public:
           if (index++)
             Append(signature, ", ");
           Printf(signature, "%s: \"%s\"", name, type ? type : "typing.Any");
-          if (Getattr(p, "value"))
+          if (Getattr(p, "value") || Getattr(p, "tmap:default"))
             Append(signature, " = ...");
           Delete(name);
           Delete(type);
