@@ -28,7 +28,7 @@ for name, value in expected.items():
 for name in ("DEFAULT_ZERO", "DEFAULT_EXPLICIT", "OPT_OUT", "CONSTANT",
              "EXPRESSION", "AFTER_EXPRESSION", "CAST", "AFTER_CAST",
              "NEGATIVE_UNSIGNED", "AFTER_UNSIGNED", "TOO_LARGE",
-             "LIMIT", "OVERFLOW", "AFTER_OVERFLOW", "ABOVE_INT_MAXIMUM", "HEX_UNSIGNED_MINUS",
+             "LIMIT", "BOUNDARY_OVERFLOW", "AFTER_OVERFLOW", "ABOVE_INT_MAXIMUM", "HEX_UNSIGNED_MINUS",
              "AFTER_HEX_UNSIGNED_MINUS", "REFERENCE", "AFTER_REFERENCE"):
     swig_check(constants[name].value, None)
 for name in ("HIDDEN", "HIDDEN_FIRST", "ORIGINAL"):

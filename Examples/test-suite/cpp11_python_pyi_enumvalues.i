@@ -55,7 +55,7 @@ enum SignedBoundary : long long {
 };
 enum Boundary : unsigned long long {
   LIMIT = 9223372036854775807LL,
-  OVERFLOW,
+  BOUNDARY_OVERFLOW,
   AFTER_OVERFLOW,
   RECOVER = 4,
   AFTER_RECOVER
