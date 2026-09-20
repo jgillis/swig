@@ -43,10 +43,9 @@ jobs:
           ./autogen.sh
           ./configure --without-alllang --with-matlab=/usr/bin/octave --enable-octave-for-matlab
           make -j2
-      - name: Run focused MEX regressions
+      - name: Run MEX runtime regressions
         run: |
           cflags=$(python3 Tools/testflags.py -l matlab -c -s c17)
           cxxflags=$(python3 Tools/testflags.py -l matlab -x -s c++17)
-          make -C Examples/test-suite/matlab CFLAGS="$cflags" CXXFLAGS="$cxxflags" \
-            matlab_features.cpptest matlab_director.cpptest li_std_auto_ptr.cpptest
+          make -j2 -C Examples/test-suite/matlab CFLAGS="$cflags" CXXFLAGS="$cxxflags" check-runtime
           make check-matlab-examples

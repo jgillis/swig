@@ -1,4 +1,7 @@
 classdef MatlabDirector < matlab_director.Callback
+  properties
+    mode = 0;
+  end
   methods
     function self = MatlabDirector()
       self@matlab_director.Callback();
@@ -8,7 +11,13 @@ classdef MatlabDirector < matlab_director.Callback
       extra = value + 30;
     end
     function result = value(self, value)
-      result = value + 10;
+      if self.mode == 1
+        result = 'invalid integer';
+      elseif self.mode == 2
+        error('Callback:Failure', 'callback failed');
+      else
+        result = value + 10;
+      end
     end
   end
 end

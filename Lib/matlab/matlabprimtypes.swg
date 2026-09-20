@@ -240,6 +240,7 @@ SWIG_AsCharPtrAndSize(mxArray* pm, char** cptr, size_t* psize, int *alloc)
   if (!mxIsChar(pm) || (mxGetNumberOfElements(pm) != 0 && mxGetM(pm) != 1))
     return SWIG_TypeError;
   len = mxGetNumberOfElements(pm);
+  if (len > ((size_t)-1) / 2 - 1) return SWIG_OverflowError;
   data = mxGetChars(pm);
   for (i = 0; i < len; ++i)
     if (data[i] > 255) return SWIG_TypeError;
@@ -279,11 +280,18 @@ SWIG_AsWCharPtrAndSize(mxArray *pm, wchar_t **cptr, size_t *psize, int *alloc) {
   const mxChar *data;
   if (!mxIsChar(pm) || (mxGetNumberOfElements(pm) && mxGetM(pm) != 1)) return SWIG_TypeError;
   len = mxGetNumberOfElements(pm);
+  if (len > ((size_t)-1) / (2 * sizeof(wchar_t)) - 1) return SWIG_OverflowError;
   data = mxGetChars(pm);
   if (cptr) {
     if (!alloc) return SWIG_TypeError;
     *cptr = %new_array(len + 1, wchar_t);
-    for (i = 0; i < len; ++i) (*cptr)[i] = data[i];
+    for (i = 0; i < len; ++i) {
+%#ifdef HAVE_OCTAVE
+      (*cptr)[i] = (unsigned char)data[i];
+%#else
+      (*cptr)[i] = data[i];
+%#endif
+    }
     (*cptr)[len] = 0;
     *alloc = SWIG_NEWOBJ;
   }
@@ -300,9 +308,9 @@ SWIG_FromWCharPtrAndSize(const wchar_t *data, size_t size) {
   mxChar *out = mxGetChars(result);
   size_t i;
   for (i = 0; i < size; ++i) {
-    if ((unsigned long)data[i] > 65535) {
+    if ((unsigned long)data[i] > (sizeof(mxChar) == 1 ? 255UL : 65535UL)) {
       mxDestroyArray(result);
-      SWIG_Matlab_ErrorId("SWIG:ValueError", "wide character exceeds a UTF-16 code unit");
+      SWIG_Matlab_ErrorId("SWIG:ValueError", "wide character exceeds the target character range");
       return 0;
     }
     out[i] = (mxChar)data[i];

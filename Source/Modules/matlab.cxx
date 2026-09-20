@@ -399,7 +399,7 @@ int MATLAB::top(Node *n) {
   Printf(f_runtime, "\n");
   Printf(f_runtime, "#define SWIG_op_prefix        \"%s\"\n", op_prefix);
   Printf(f_runtime, "#define SWIG_pkg_name        \"%s\"\n", pkg_name);
-  Printf(f_runtime, "#define SwigVar_mxArray mxArray*\n");
+  Printf(f_runtime, "#define SwigVar_mxArray Swig::MxArray\n");
   if (Swig_directors_enabled()) {
     Printf(f_runtime, "#define SWIG_DIRECTORS\n");
   }
@@ -1095,10 +1095,7 @@ int MATLAB::functionWrapper(Node *n) {
     Printf(f->code, "upcall = director;\n", self_parm);
   }
 
-  /* Emit the function call */
-  if (director_method) {
-    Append(f->code, "try {\n");
-  }
+  /* Emit the function call. Director errors unwind to the MEX gateway. */
 
   Swig_director_emit_dynamic_cast(n, f);
 
@@ -1107,12 +1104,6 @@ int MATLAB::functionWrapper(Node *n) {
   }
   String *actioncode = emit_action(n);
   if (destructor) {
-    Append(actioncode, "}\n");
-  }
-
-  if (director_method) {
-    Append(actioncode, "} catch (Swig::DirectorException&) {\n");
-    Append(actioncode, "  SWIG_fail;\n");
     Append(actioncode, "}\n");
   }
 
@@ -1857,36 +1848,35 @@ int MATLAB::classDirectorMethod(Node *n, Node *parent, String *super) {
       Printf(w->code, "swig_set_inner(\"%s\", true);\n", name);
     }
 
-    Append(w->code, "if (!swig_get_self()) {\n");
+    Append(w->code, "Swig::MxArray swig_self(swig_get_self());\n");
+    Append(w->code, "if (!(mxArray *)swig_self) {\n");
     Printf(w->code, "  Swig::DirectorException::raise(\"MATLAB superclass constructor %s was not called.\");\n", classname);
     Append(w->code, "}\n");
     if (Len(parse_args) > 0) {
       if (use_parse) {
       } else {
-        Printf(w->code, "mxArray* dispatch_in[%d] = {swig_get_self()%s};\n", Len(parse_args) + 1, arglist);
+        Printf(w->code, "mxArray* dispatch_in[%d] = {swig_self%s};\n", Len(parse_args) + 1, arglist);
         if (outputs) {
           Printf(w->code, "mxArray* dispatch_out[%d] = {0};\n", outputs);
-          Printf(w->code, "mxArray* error = SWIG_Matlab_CallInterpEx(%d, dispatch_out, %d, dispatch_in, \"%s\");\n", outputs, Len(parse_args) + 1, symname);
+          Printf(w->code, "Swig::MxArrayOutputs swig_outputs(dispatch_out, %d);\n", outputs);
+          Printf(w->code, "Swig::MxArray error(SWIG_Matlab_CallInterpEx(%d, dispatch_out, %d, dispatch_in, \"%s\"));\n", outputs, Len(parse_args) + 1, symname);
           if (outputs == 1)
             Printf(w->code, "mxArray* %s = dispatch_out[0];\n(void)%s;\n", Swig_cresult_name(), Swig_cresult_name());
         } else {
-          Printf(w->code, "mxArray* error = SWIG_Matlab_CallInterpEx(0, 0, %d, dispatch_in, \"%s\");\n", Len(parse_args) + 1, symname);
+          Printf(w->code, "Swig::MxArray error(SWIG_Matlab_CallInterpEx(0, 0, %d, dispatch_in, \"%s\"));\n", Len(parse_args) + 1, symname);
         }
       }
     } else {
-      Printf(w->code, "mxArray* dispatch_in[1] = {swig_get_self()};\n");
+      Printf(w->code, "mxArray* dispatch_in[1] = {swig_self};\n");
       if (outputs) {
         Printf(w->code, "mxArray* dispatch_out[%d] = {0};\n", outputs);
-        Printf(w->code, "mxArray* error = SWIG_Matlab_CallInterpEx(%d, dispatch_out, 1, dispatch_in, \"%s\");\n", outputs, symname);
+        Printf(w->code, "Swig::MxArrayOutputs swig_outputs(dispatch_out, %d);\n", outputs);
+        Printf(w->code, "Swig::MxArray error(SWIG_Matlab_CallInterpEx(%d, dispatch_out, 1, dispatch_in, \"%s\"));\n", outputs, symname);
         if (outputs == 1)
           Printf(w->code, "mxArray* %s = dispatch_out[0];\n(void)%s;\n", Swig_cresult_name(), Swig_cresult_name());
       } else {
-        Printf(w->code, "mxArray* error = SWIG_Matlab_CallInterpEx(0, 0, 1, dispatch_in, \"%s\");\n", symname);
+        Printf(w->code, "Swig::MxArray error(SWIG_Matlab_CallInterpEx(0, 0, 1, dispatch_in, \"%s\"));\n", symname);
       }
-    }
-    /* Destroy persistent input arrays after dispatch */
-    for (int i = 0; i < idx; i++) {
-      Printf(w->code, "if (obj%d) mxDestroyArray(obj%d);\n", i, i);
     }
 
     if (dirprot_mode() && !is_public(n))
@@ -1900,7 +1890,6 @@ int MATLAB::classDirectorMethod(Node *n, Node *parent, String *super) {
         tm = Copy(tm);
     }
     Printf(w->code, "if (error != 0) {\n", Swig_cresult_name());
-    Printf(w->code, "mexCallMATLAB(0, (mxArray **)NULL,1, &error, \"throw\");");
 
     if ((tm) && Len(tm) && (Strcmp(tm, "1") != 0)) {
       Replaceall(tm, "$error", "error");
@@ -2311,6 +2300,8 @@ void MATLAB::initGateway() {
   }
   /* Begin the switch: */
   Printf(f_gateway, "  int flag=0;\n");
+  if (Swig_directors_enabled())
+    Printf(f_gateway, "  try {\n");
   Printf(f_gateway, "  switch (fcn_id) {\n");
 
   /* List of function names */
@@ -2354,6 +2345,12 @@ int MATLAB::toGateway(String *fullname, String *wname) {
 void MATLAB::finalizeGateway() {
   Printf(f_gateway, "  default: flag=1, SWIG_Error_Format(SWIG_RuntimeError, \"No function id %%d.\", fcn_id);\n");
   Printf(f_gateway, "  }\n");
+
+  if (Swig_directors_enabled()) {
+    Printf(f_gateway, "  } catch (const Swig::DirectorException &error) {\n");
+    Printf(f_gateway, "    SWIG_Error(SWIG_RuntimeError, error.what());\n");
+    Printf(f_gateway, "    flag = 1;\n  }\n");
+  }
 
   /* Restore std::cout and std::cerr */
   if (CPlusPlus && redirectoutput) {
@@ -2958,9 +2955,13 @@ void MATLAB::createSwigStorage() {
   Printf(f_wrap_m, "function varargout = SwigStorage(field, varargin)\n");
   Printf(f_wrap_m, "  persistent dir_mem\n");
   Printf(f_wrap_m, "  mlock\n");
-  Printf(f_wrap_m, "  narginchk(1,2)\n");
+  Printf(f_wrap_m, "  narginchk(0,2)\n");
   Printf(f_wrap_m, "  if isempty(dir_mem)\n");
   Printf(f_wrap_m, "    dir_mem = struct;\n");
+  Printf(f_wrap_m, "  end\n");
+  Printf(f_wrap_m, "  if nargin==0\n");
+  Printf(f_wrap_m, "    varargout{1} = numel(fieldnames(dir_mem));\n");
+  Printf(f_wrap_m, "    return\n");
   Printf(f_wrap_m, "  end\n");
   Printf(f_wrap_m, "  if nargin==1\n");
   Printf(f_wrap_m, "    nargoutchk(0,1)\n");

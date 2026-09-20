@@ -10,7 +10,8 @@ Version 4.6.0 (in progress)
 2026-09-20: jgillis
             [MATLAB] Add an experimental MATLAB MEX target selected with -matlab,
             including package functions, handle class proxies, C++ inheritance,
-            overloads, standard containers, and a MATLAB regression test harness.
+            overloads, standard containers, director callbacks, and a regression test
+            harness for MATLAB and the Octave MEX interface.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are
