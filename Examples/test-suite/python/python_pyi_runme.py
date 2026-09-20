@@ -68,16 +68,15 @@ with open("python_pyi.py") as f:
     py_source = f.read()
 py_tree = ast.parse(py_source, filename="python_pyi.py")
 
-# The .py file keeps just the guarded 'this' declaration, which __disown__ needs to type check.
-# There are no proxy classes at all to declare it in when -builtin is used.
-py_classes = [node for node in ast.walk(py_tree) if isinstance(node, ast.ClassDef)]
-if py_classes and "if typing.TYPE_CHECKING:" not in py_source:
-    raise RuntimeError("python_pyi.py should declare 'this' guarded by typing.TYPE_CHECKING")
+# Stub-only annotation machinery must not add runtime imports or declarations.
+if "typing" in vars(python_pyi):
+    raise RuntimeError("-pyi should not export typing from the runtime module")
+if "typing.TYPE_CHECKING" in py_source or "_swig_dispatch" in py_source:
+    raise RuntimeError("-pyi should not leave annotation helpers in the runtime module")
 for node in ast.walk(py_tree):
-    if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) != "this":
-        raise RuntimeError("python_pyi.py should have no variable annotations except 'this' when -pyi is used")
-    # _swig_dispatch is type checker plumbing for the overload dispatchers in this file, not an annotation of the wrapped API.
-    if isinstance(node, ast.FunctionDef) and node.name != "_swig_dispatch" and (node.returns is not None or any(a.annotation is not None for a in node.args.args)):
+    if isinstance(node, ast.AnnAssign):
+        raise RuntimeError("python_pyi.py should have no variable annotations when -pyi is used")
+    if isinstance(node, ast.FunctionDef) and (node.returns is not None or any(a.annotation is not None for a in node.args.args)):
         raise RuntimeError("python_pyi.py should have no function annotations when -pyi is used")
 
 # The type wrapper classes only exist to give an annotation a name, and the annotations are in the stub.

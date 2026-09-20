@@ -969,7 +969,8 @@ public:
       if (Len(shadow_begin) > 0)
         Printv(f_shadow_py, "\n", shadow_begin, "\n", NIL);
 
-      Printv(f_shadow_py, "\nimport typing\n", NULL);
+      if (!pyi_stub)
+        Printv(f_shadow_py, "\nimport typing\n", NULL);
 
       if (Len(shadow_after_begin) > 0)
         Printv(f_shadow_py, shadow_after_begin, "\n", NIL);
@@ -2565,7 +2566,7 @@ public:
    * ------------------------------------------------------------ */
 
   String *dispatchDecorator(Node *n, const char *indent) {
-    if (getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING || !is_pyargs_dispatcher(n))
+    if (pyi_stub || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING || !is_pyargs_dispatcher(n))
       return NewStringEmpty();
     have_dispatcher_decorator = true;
     return NewStringf("@_swig_dispatch\n%s", indent);
@@ -5543,7 +5544,7 @@ public:
 
         // The 'this' attribute is added to each instance by the C code, so declare it for the benefit of type
         // checkers. It is a variable annotation, so 'novar' turns it off along with all the others.
-        if (getTypeAnnotationMode(n) == TYPE_ANNOTATION_TYPING && !GetFlag(n, "feature:python:annotations:novar")) {
+        if (!pyi_stub && getTypeAnnotationMode(n) == TYPE_ANNOTATION_TYPING && !GetFlag(n, "feature:python:annotations:novar")) {
           Printv(shadow_code, tab4, "if typing.TYPE_CHECKING:\n", NIL);
           Printv(shadow_code, tab8, "this: \"typing.Any\"\n", NIL);
         }
