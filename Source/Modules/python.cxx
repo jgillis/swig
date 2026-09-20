@@ -3254,6 +3254,9 @@ public:
       return;
 
     ParmList *parms = Getattr(n, "wrap:parms");
+    /* constructorHandler prepends the Python instance for director construction. */
+    if (Equal(nodeType(n), "constructor") && Swig_directorclass(n))
+      parms = nextSibling(parms);
     Swig_typemap_attach_parms("pytyping", parms, 0);
     String *signature = NewStringEmpty();
     int index = 0;

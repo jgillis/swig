@@ -1,4 +1,4 @@
-%module python_pyi_overloads
+%module(directors="1") python_pyi_overloads
 %feature("python:annotations", "typing");
 %feature("python:stub:overloads");
 %feature("compactdefaultargs");
@@ -53,6 +53,19 @@ public:
   std::string pick(std::string s) { return s; }
   static int build(int n) { return n; }
   static std::string build(std::string s) { return s; }
+  int value;
+};
+%}
+
+%feature("director") DirectorChoice;
+%typemap(pytyping) const DirectorChoice &, DirectorChoice * "DirectorChoice"
+%inline %{
+struct DirectorChoice {
+  DirectorChoice() : value(1) {}
+  DirectorChoice(int input_value, int extra = default_number()) : value(input_value + extra) {}
+  DirectorChoice(const DirectorChoice &other) : value(other.value) {}
+  virtual ~DirectorChoice() {}
+  virtual int get() const { return value; }
   int value;
 };
 %}

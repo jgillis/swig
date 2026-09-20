@@ -12,6 +12,7 @@ Version 4.6.0 (in progress)
             typing annotations. It emits individual typed overloads for functions,
             methods and constructors, including default arguments and argout return
             values. Existing catchall stub declarations remain the default.
+            Director constructor stubs omit the internal Python instance argument.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are

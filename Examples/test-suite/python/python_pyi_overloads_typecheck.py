@@ -33,3 +33,16 @@ ranked_arity_bool: str = ranked_arities(2, True)
 ranked_arity_int: int = ranked_arities(2, 3)
 wrong_default: str = ranked_defaults(2)  # type: ignore
 wrong_arity: int = ranked_arities(2, True)  # type: ignore
+
+from python_pyi_overloads import DirectorChoice
+
+class DerivedChoice(DirectorChoice):
+    def __init__(self) -> None:
+        super().__init__()
+
+empty_director = DirectorChoice()
+parameter_director = DirectorChoice(3)
+explicit_director = DirectorChoice(3, 4)
+copied_director = DirectorChoice(parameter_director)
+DirectorChoice("wrong")  # type: ignore
+DirectorChoice(1, 2, 3)  # type: ignore

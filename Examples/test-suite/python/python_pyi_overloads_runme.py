@@ -59,3 +59,20 @@ for name in ("__init__", "pick", "build"):
 swig_check(ast.literal_eval(functions["ranked_defaults"][0].args.args[0].annotation), "int")
 swig_check([len(item.args.args) for item in functions["ranked_arities"]], [1, 2, 2])
 swig_check(ast.literal_eval(functions["ranked_arities"][1].args.args[1].annotation), "bool")
+
+class DerivedChoice(m.DirectorChoice):
+    def __init__(self, *args):
+        super().__init__(*args)
+
+swig_check(DerivedChoice().get(), 1)
+swig_check(DerivedChoice(3).get(), 10)
+swig_check(DerivedChoice(3, 4).get(), 7)
+swig_check(DerivedChoice(DerivedChoice(4)).get(), 11)
+with swig_assert_raises(TypeError):
+    DerivedChoice("wrong")
+with swig_assert_raises(TypeError):
+    DerivedChoice(1, 2, 3)
+director = next(item for item in tree.body if isinstance(item, ast.ClassDef) and item.name == "DirectorChoice")
+constructors = [item for item in director.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"]
+swig_check(sorted(len(item.args.args) for item in constructors), [1, 2, 3])
+swig_assert(all(item.args.vararg is None for item in constructors), "Director constructors need explicit signatures")
