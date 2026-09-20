@@ -3087,8 +3087,8 @@ public:
     if (tm)
       tm = Copy(tm);
     else {
-      // Wrapper generation may replace an extended member's name with the C++
-      // helper name. Named pytyping typemaps refer to the original member.
+      /* Wrapper generation may replace an extended member's name with the C++
+         helper name. Named pytyping typemaps refer to the original member. */
       String *membername = Getattr(n, "memberfunctionHandler:name");
       if (!membername)
         membername = Getattr(n, "staticmemberfunctionHandler:name");
