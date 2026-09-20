@@ -42,3 +42,31 @@ for (f, invalid) in ((signed_byte, -129), (signed_byte, 128),
   @test_throws m.SwigError f(invalid)
 end
 @test unsigned_byte(255) === UInt8(255)
+
+for input in (typemin(Int64), typemax(Int64))
+    @test const_alias_value(input) === input
+    @test chained_alias_value(input) === input
+    @test const_alias_reference(input) === input
+    @test chained_alias_reference(input) === input
+    owner = ConstEnumOwner(input)
+    @test owner.get() === input
+    @test owner.echo(input) === input
+    @test ConstEnumOwner.static_echo(input) === input
+    finalize(owner)
+end
+@test named_alias(typemin(Int64)) === typemax(Int64)
+@test_throws m.SwigError chained_alias_value(big(typemax(Int64)) + 1)
+@test_throws m.SwigError const_alias_reference(big(typemin(Int64)) - 1)
+
+@test alias_return() === typemin(Int64)
+@test alias_reference_return() === typemax(Int64)
+
+try
+    exception_alias_reference(typemin(Int64))
+    error("Expected the custom exception")
+catch exception
+    @test exception isa m.SwigError
+    @test occursin("(enum SignedWide const const &)*arg1", sprint(showerror, exception))
+end
+
+@test alias_initializers()

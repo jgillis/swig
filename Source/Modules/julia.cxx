@@ -1256,7 +1256,36 @@ public:
     String *wname = NewStringf("_swig_%s_%s%s", class_jlname ? Char(class_jlname) : "g", Char(symname), overname ? Char(overname) : "");
     Setattr(n, "wrap:name", wname);
 
-    /* attach typemaps; sets lname (arg1, ...) for $1 substitution */
+    /* Resolve enum aliases for C++ locals without changing typemap lookup by the declared alias. */
+    for (Parm *p = parms; p; p = nextSibling(p)) {
+      SwigType *declared = Getattr(p, "type");
+      SwigType *resolved = SwigType_typedef_resolve_all(declared);
+      SwigType *base = SwigType_base(resolved);
+      SwigType *value_type = Copy(resolved);
+      if (SwigType_isreference(value_type))
+        SwigType_del_reference(value_type);
+      SwigType *unqualified = SwigType_strip_qualifiers(value_type);
+      if (SwigType_isenum(unqualified) && (!SwigType_isreference(resolved) || SwigType_isconst(value_type))) {
+        if (SwigType_isreference(resolved)) {
+          SwigType_add_qualifier(base, "const");
+          SwigType_add_reference(base);
+        }
+        Setattr(p, "julia:enum:declared", declared);
+        Setattr(p, "julia:enum:resolved", base);
+        Setattr(p, "type", base);
+      }
+      Delete(unqualified);
+      Delete(value_type);
+      Delete(base);
+      Delete(resolved);
+    }
+    /* Predeclare corrected locals. The normal emission pass below reuses them because Wrapper_add_local deduplicates names. */
+    Swig_cargs(w, parms);
+    for (Parm *p = parms; p; p = nextSibling(p)) {
+      if (SwigType *declared = Getattr(p, "julia:enum:declared"))
+        Setattr(p, "type", declared);
+    }
+    /* All typemap lookup, including default and arginit, uses the original alias. */
     emit_parameter_variables(parms, w);
     emit_attach_parmmaps(parms, w);
     Swig_typemap_attach_parms("ctype", parms, w);
@@ -1520,9 +1549,49 @@ public:
       ret_jt = NewString("Any");
       is_void = false;
     }
-    if (!is_void)
-      emit_return_variable(n, returntype, w);
+    if (!is_void) {
+      SwigType *resolved = SwigType_typedef_resolve_all(returntype);
+      SwigType *unqualified = SwigType_strip_qualifiers(resolved);
+      emit_return_variable(n, SwigType_isenum(unqualified) ? unqualified : returntype, w);
+      Delete(unqualified);
+      Delete(resolved);
+    }
+    String *original_action = Copy(Getattr(n, "wrap:action"));
+    String *normalized_action = Copy(original_action);
+    for (Parm *p = parms; p; p = nextSibling(p)) {
+      if (SwigType *resolved = Getattr(p, "julia:enum:resolved")) {
+        String *before = SwigType_rcaststr(Getattr(p, "type"), Getattr(p, "lname"));
+        String *after = SwigType_rcaststr(resolved, Getattr(p, "lname"));
+        Replaceall(normalized_action, before, after);
+        SwigType *declared = SwigType_typedef_resolve_all(Getattr(p, "type"));
+        String *expanded = SwigType_rcaststr(declared, Getattr(p, "lname"));
+        Replaceall(normalized_action, expanded, after);
+        Delete(expanded);
+        Delete(declared);
+        Delete(before);
+        Delete(after);
+        Delattr(p, "julia:enum:declared");
+        Delattr(p, "julia:enum:resolved");
+      }
+    }
+    SwigType *resolved_result = SwigType_typedef_resolve_all(returntype);
+    SwigType *value_result = SwigType_strip_qualifiers(resolved_result);
+    if (SwigType_isenum(value_result)) {
+      String *before = Swig_cresult(returntype, Swig_cresult_name(), "$julia_call");
+      String *after = Swig_cresult(value_result, Swig_cresult_name(), "$julia_call");
+      Replaceall(before, "$julia_call;", "");
+      Replaceall(after, "$julia_call;", "");
+      Replaceall(normalized_action, before, after);
+      Delete(before);
+      Delete(after);
+    }
+    Delete(value_result);
+    Delete(resolved_result);
+    Setattr(n, "wrap:action", normalized_action);
     String *actioncode = emit_action(n);
+    Setattr(n, "wrap:action", original_action);
+    Delete(normalized_action);
+    Delete(original_action);
     /* director member wrappers carry an 'if (upcall)' base-vs-virtual branch;
        the flat-C surface always calls the virtual (which dispatches to the
        Julia override when present), so pin upcall to false. */

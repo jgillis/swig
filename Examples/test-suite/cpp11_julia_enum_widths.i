@@ -61,3 +61,51 @@ struct EnumOwner {
   static Nested nested(Nested value) { return value; }
 };
 %}
+
+#ifdef SWIGJULIA
+// Other backends retain the shared const-enum typedef local/cast limitation.
+%inline %{
+typedef const SignedWide ConstSignedWide;
+typedef ConstSignedWide ChainedSignedWide;
+SignedWide const_alias_value(ConstSignedWide value) { return value; }
+SignedWide chained_alias_value(ChainedSignedWide value) { return value; }
+SignedWide const_alias_reference(const ConstSignedWide &value) { return value; }
+SignedWide chained_alias_reference(const ChainedSignedWide &value) { return value; }
+const ChainedSignedWide &alias_reference_return() {
+  static const SignedWide value = SignedWide::High;
+  return value;
+}
+struct ConstEnumOwner {
+  ConstEnumOwner(const ChainedSignedWide &value) : value_(value) {}
+  SignedWide echo(const ConstSignedWide &value) { return value; }
+  static SignedWide static_echo(ChainedSignedWide value) { return value; }
+  SignedWide get() const { return value_; }
+private:
+  SignedWide value_;
+};
+%}
+// Top-level return const is part of the parsed alias, but not the C++ function type.
+%{
+SignedWide alias_return() { return SignedWide::Low; }
+%}
+ChainedSignedWide alias_return();
+%exception exception_alias_reference %{
+  throw std::runtime_error("(enum SignedWide const const &)*arg1");
+  $action
+%}
+%inline %{
+SignedWide exception_alias_reference(const ConstSignedWide &value) { return value; }
+%}
+%typemap(in) ConstSignedWide named %{ $1 = SignedWide::High; %}
+%inline %{
+SignedWide named_alias(ConstSignedWide named) { return named; }
+%}
+%typemap(arginit) ChainedSignedWide initialized %{ $1 = SignedWide::Low; %}
+%typemap(default) ChainedSignedWide defaulted %{ $1 = SignedWide::High; %}
+%typemap(in, numinputs=0) ChainedSignedWide initialized, ChainedSignedWide defaulted "";
+%inline %{
+bool alias_initializers(ChainedSignedWide initialized, ChainedSignedWide defaulted) {
+  return initialized == SignedWide::Low && defaulted == SignedWide::High;
+}
+%}
+#endif

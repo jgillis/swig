@@ -123,7 +123,7 @@ JULIA_INTEGER(size_t, Csize_t)
 /* ---- enums: checked conversion through the compiler's underlying type ---- */
 %typemap(ctype)  enum SWIGTYPE, const enum SWIGTYPE& "jl_value_t *"
 %typemap(in)     enum SWIGTYPE %{ $1 = swig_jl_enum_read<$1_ltype>($input); %}
-%typemap(in)     const enum SWIGTYPE& ($*1_ltype tmp) %{ tmp = swig_jl_enum_read<$*1_ltype>($input); $1 = &tmp; %}
+%typemap(in)     const enum SWIGTYPE& (typename std::remove_cv<$*1_ltype>::type tmp) %{ tmp = swig_jl_enum_read<$*1_ltype>($input); $1 = &tmp; %}
 %typemap(out)    enum SWIGTYPE %{ $result = swig_jl_enum_box($1); %}
 %typemap(out)    const enum SWIGTYPE& %{ $result = swig_jl_enum_box(*$1); %}
 %typemap(jltype) enum SWIGTYPE, const enum SWIGTYPE& "Any"

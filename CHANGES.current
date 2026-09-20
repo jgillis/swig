@@ -14,7 +14,8 @@ Version 4.6.0 (in progress)
             Director callbacks retain shared callback objects independently, check
             integer return ranges and preserve embedded zeros in strings.
             Enums preserve the compiler's underlying integer representation and
-            reject arguments outside its range. Unsigned tuple elements retain
+            reject arguments outside its range, including const-qualified enum typedef
+            parameters and results. Unsigned tuple elements retain
             their full value range. Primitive const reference results return
             their values instead of treating wrapper pointers as values.
 
