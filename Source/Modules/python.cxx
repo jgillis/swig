@@ -3250,8 +3250,7 @@ public:
 
   /* Cache an overload while its wrapped parameter and return types are available. */
   void cacheOverloadStub(Node *n) {
-    if (!pyi_stub || !GetFlag(n, "feature:python:stub:overloads") || !Getattr(n, "sym:overloaded") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING ||
-        Getattr(n, "defaultargs"))
+    if (!pyi_stub || !GetFlag(n, "feature:python:stub:overloads") || !Getattr(n, "sym:overloaded") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING)
       return;
 
     ParmList *parms = Getattr(n, "wrap:parms");
@@ -3292,10 +3291,9 @@ public:
     List *signatures = NewList();
     Hash *returns = NewHash();
     bool complete = true;
+    /* Default argument copies have their own dispatch rank and must remain in the signature list. */
     for (Iterator it = First(ranked); it.item; it = Next(it)) {
       Node *overload = it.item;
-      if (Getattr(overload, "defaultargs"))
-        continue;
       String *params = Getattr(overload, "python:stub:overload:parms");
       String *result = constructor ? NewString("None") : Copy(Getattr(overload, "python:stub:overload:return"));
       if (!params || !result) {

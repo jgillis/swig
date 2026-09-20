@@ -7954,7 +7954,9 @@ convention supported by type checkers for Python versions before 3.8.
 </p>
 
 <p>
-Declarations follow the runtime overload ordering. Overloads with identical
+Declarations follow the runtime overload ordering, including the shorter signatures
+generated for default arguments. These signatures can have different priorities
+at different argument counts and are retained individually. Overloads with identical
 Python parameter annotations are combined; if their return annotations differ,
 the combined declaration returns a <tt>typing.Union</tt>. A single remaining
 signature does not receive an <tt>@typing.overload</tt> decorator.

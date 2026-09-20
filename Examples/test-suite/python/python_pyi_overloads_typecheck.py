@@ -1,6 +1,6 @@
 # pyright: strict, reportUnnecessaryTypeIgnoreComment=true
 from typing import Union
-from python_pyi_overloads import Choice, choose, compact, conflicting, defaults, duplicate, multi, produced
+from python_pyi_overloads import Choice, choose, compact, conflicting, defaults, duplicate, multi, produced, ranked_arities, ranked_defaults
 
 mapped: int = multi(["a", "b"])
 floating: float = multi(2.5)
@@ -25,3 +25,11 @@ wrong_output: str = produced(2)  # type: ignore
 Choice([])  # type: ignore
 instance.pick([])  # type: ignore
 Choice.build([])  # type: ignore
+
+ranked_default_int: int = ranked_defaults(2)
+ranked_default_str: str = ranked_defaults(2.5)
+ranked_arity_one: int = ranked_arities(2)
+ranked_arity_bool: str = ranked_arities(2, True)
+ranked_arity_int: int = ranked_arities(2, 3)
+wrong_default: str = ranked_defaults(2)  # type: ignore
+wrong_arity: int = ranked_arities(2, True)  # type: ignore

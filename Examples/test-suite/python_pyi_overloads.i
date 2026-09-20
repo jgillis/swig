@@ -4,6 +4,8 @@
 %feature("compactdefaultargs");
 %feature("python:stub:overloads", "0") broad;
 %feature("compactdefaultargs", "0") defaults;
+%feature("compactdefaultargs", "0") ranked_defaults;
+%feature("compactdefaultargs", "0") ranked_arities;
 %include <std_string.i>
 %include <typemaps.i>
 %apply int *OUTPUT { int *out };
@@ -29,6 +31,10 @@ int choose(int n) { return n; }
 std::string choose(std::string s) { return s; }
 int broad(int n) { return n; }
 std::string broad(std::string s) { return s; }
+int ranked_defaults(int n, int extra = 0) { return n + extra; }
+std::string ranked_defaults(double) { return "floating"; }
+int ranked_arities(int n, int extra = 0) { return n + extra; }
+std::string ranked_arities(int, bool) { return "boolean"; }
 int defaults(int n, int extra = 3) { return n + extra; }
 std::string defaults(std::string s) { return s; }
 int compact(int n, int extra = default_number()) { return n + extra; }
