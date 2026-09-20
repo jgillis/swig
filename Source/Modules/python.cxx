@@ -4496,7 +4496,7 @@ public:
   }
 
   /* Resolve integer tokens without evaluating C expressions or assuming the target's integer widths. */
-  static bool stubEnumLiteral(String *expression, long long &value) {
+  static bool stubEnumLiteral(String *expression, int64_t &value) {
     const char *text = Char(expression);
     while (isspace((unsigned char)*text))
       ++text;
@@ -4510,8 +4510,8 @@ public:
     bool nondecimal = text[0] == '0' && text[1] && !isspace((unsigned char)text[1]);
     char *end;
     errno = 0;
-    unsigned long long magnitude = strtoull(text, &end, 0);
-    if (errno == ERANGE || magnitude > (unsigned long long)LLONG_MAX)
+    uint64_t magnitude = strtoull(text, &end, 0);
+    if (errno == ERANGE || magnitude > (uint64_t)INT64_MAX)
       return false;
     char suffix[4];
     int length = 0;
@@ -4530,7 +4530,7 @@ public:
        literals can also have unsigned type without an explicit 'u' suffix. */
     if (negative && (strchr(suffix, 'u') || (nondecimal && magnitude > PYTHON_INT_MAX && strcmp(suffix, "ll"))))
       return false;
-    value = negative ? -(long long)magnitude : (long long)magnitude;
+    value = negative ? -(int64_t)magnitude : (int64_t)magnitude;
     return true;
   }
 
@@ -4542,7 +4542,7 @@ public:
    * ------------------------------------------------------------ */
   virtual int enumDeclaration(Node *n) {
     if (pyi_stub) {
-      long long value = 0;
+      int64_t value = 0;
       bool known = true;
       for (Node *item = firstChild(n); item; item = nextSibling(item)) {
         Delattr(item, "python:stub:enumvalue");
@@ -4553,12 +4553,12 @@ public:
           Getattr(item, "feature:python:stub:enumvalues") ? GetFlag(item, "feature:python:stub:enumvalues") : GetFlag(n, "feature:python:stub:enumvalues");
         /* The default Python enum constant typemap converts through C int. */
         if (known && enabled && value >= PYTHON_INT_MIN && value <= PYTHON_INT_MAX) {
-          String *literal = NewStringf("%lld", value);
+          String *literal = NewStringf("%d", (int)value);
           Setattr(item, "python:stub:enumvalue", literal);
           Delete(literal);
         }
         if (known) {
-          if (value == LLONG_MAX)
+          if (value == INT64_MAX)
             known = false;
           else
             ++value;
