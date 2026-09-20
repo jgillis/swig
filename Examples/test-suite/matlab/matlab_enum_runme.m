@@ -9,3 +9,6 @@ catch
   failed = true;
 end
 assert(failed);
+assert(matlab_enum.echo_const(-7) == -7);
+assert(matlab_enum.echo_volatile(11) == 11);
+assert(matlab_enum.echo_cv(-7) == -7);

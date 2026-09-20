@@ -59,3 +59,24 @@ end
 assert(failed);
 delete(v);
 delete(holder);
+assert(isequal(cpp11_matlab_enum_widths.const_signed_echo(low), low));
+callback = MatlabEnumDirector();
+assert(isequal(cpp11_matlab_enum_widths.invoke_signed(callback, low), low));
+assert(isequal(cpp11_matlab_enum_widths.invoke_signed(callback, high), high));
+assert(isequal(cpp11_matlab_enum_widths.invoke_unsigned(callback, unsigned_high), unsigned_high));
+callback.invalid = true;
+failed = false;
+try
+  cpp11_matlab_enum_widths.invoke_signed(callback, low);
+catch
+  failed = true;
+end
+assert(failed);
+failed = false;
+try
+  cpp11_matlab_enum_widths.invoke_unsigned(callback, unsigned_high);
+catch
+  failed = true;
+end
+assert(failed);
+delete(callback);

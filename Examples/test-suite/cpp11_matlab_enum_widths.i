@@ -1,4 +1,5 @@
-%module cpp11_matlab_enum_widths
+%module(directors="1") cpp11_matlab_enum_widths
+%feature("director") EnumCallback;
 %include <std_vector.i>
 %include <std_pair.i>
 %inline %{
@@ -13,6 +14,15 @@ enum class Narrow : unsigned char { high = 255 };
 enum class Signed32 : int { low = (-2147483647 - 1), high = 2147483647 };
 enum class Unsigned32 : unsigned int { high = 4294967295U };
 typedef SignedWide SignedAlias;
+typedef const SignedWide ConstSignedAlias;
+ConstSignedAlias const_signed_echo(ConstSignedAlias value) { return value; }
+struct EnumCallback {
+  virtual ~EnumCallback() {}
+  virtual SignedWide signed_value(SignedWide value) = 0;
+  virtual UnsignedWide unsigned_value(UnsignedWide value) = 0;
+};
+SignedWide invoke_signed(EnumCallback &callback, SignedWide value) { return callback.signed_value(value); }
+UnsignedWide invoke_unsigned(EnumCallback &callback, UnsignedWide value) { return callback.unsigned_value(value); }
 Flag flag_echo(Flag value) { return value; }
 SignedAlias signed_echo(SignedAlias value) { return value; }
 UnsignedWide unsigned_echo(UnsignedWide value) { return value; }

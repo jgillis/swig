@@ -14,7 +14,7 @@ template <class T> struct SWIG_Matlab_Enum {
 %#else
   typedef int underlying_type;
 %#endif
-  static int asval(mxArray *input, T *result) {
+  static int asval(mxArray *input, volatile T *result) {
     int64_T signed_value = 0;
     uint64_T unsigned_value = 0;
     bool is_unsigned = false;
@@ -68,6 +68,11 @@ template <class T> struct SWIG_Matlab_Enum {
     return result;
   }
 };
+/* Typedefs may retain cv qualifiers even when wrapper storage is unqualified. */
+template <class T> struct SWIG_Matlab_Enum<const T> : SWIG_Matlab_Enum<T> {};
+template <class T> struct SWIG_Matlab_Enum<volatile T> : SWIG_Matlab_Enum<T> {};
+template <class T> struct SWIG_Matlab_Enum<const volatile T> : SWIG_Matlab_Enum<T> {};
+
 template <class T> int SWIG_Matlab_AsEnum(mxArray *input, T *value) {
   return SWIG_Matlab_Enum<T>::asval(input, value);
 }
@@ -84,23 +89,23 @@ SWIGINTERN mxArray *SWIG_Matlab_FromEnum(int value) {
 }
 
 %typemap(in, fragment="SWIG_Matlab_Enum") enum SWIGTYPE {
-  int result = SWIG_Matlab_Enum<$basetype>::asval($input, &$1);
+  int result = SWIG_Matlab_Enum< $basetype >::asval($input, &$1);
   if (!SWIG_IsOK(result)) {
     %argument_fail(result, "$type", $symname, $argnum);
   }
 }
 %typemap(in, fragment="SWIG_Matlab_Enum") const enum SWIGTYPE & ($basetype temporary) {
-  int result = SWIG_Matlab_Enum<$basetype>::asval($input, &temporary);
+  int result = SWIG_Matlab_Enum< $basetype >::asval($input, &temporary);
   if (!SWIG_IsOK(result)) {
     %argument_fail(result, "$type", $symname, $argnum);
   }
   $1 = &temporary;
 }
 %typemap(out, fragment="SWIG_Matlab_Enum") enum SWIGTYPE {
-  %set_output(SWIG_Matlab_Enum<$basetype>::from($1));
+  %set_output(SWIG_Matlab_Enum< $basetype >::from($1));
 }
 %typemap(out, fragment="SWIG_Matlab_Enum") const enum SWIGTYPE & {
-  %set_output(SWIG_Matlab_Enum<$basetype>::from(*$1));
+  %set_output(SWIG_Matlab_Enum< $basetype >::from(*$1));
 }
 %typemap(varin, fragment="SWIG_Matlab_Enum") enum SWIGTYPE {
 %#if __cplusplus >= 201103L
@@ -128,18 +133,18 @@ SWIGINTERN mxArray *SWIG_Matlab_FromEnum(int value) {
   %set_constant("$symname", SWIG_Matlab_FromEnum($value));
 }
 %typemap(typecheck, precedence=SWIG_TYPECHECK_INT32, fragment="SWIG_Matlab_Enum") enum SWIGTYPE, const enum SWIGTYPE & {
-  $1 = SWIG_IsOK(SWIG_Matlab_Enum<$basetype>::asval($input, 0));
+  $1 = SWIG_IsOK(SWIG_Matlab_Enum< $basetype >::asval($input, 0));
 }
 %typemap(directorin, fragment="SWIG_Matlab_Enum") enum SWIGTYPE {
-  $input = SWIG_Matlab_Enum<$basetype>::from($1);
+  $input = SWIG_Matlab_Enum< $basetype >::from($1);
 }
 %typemap(directorin, fragment="SWIG_Matlab_Enum") const enum SWIGTYPE & {
-  $input = SWIG_Matlab_Enum<$basetype>::from($1);
+  $input = SWIG_Matlab_Enum< $basetype >::from($1);
 }
 %typemap(directorout, fragment="SWIG_Matlab_Enum") enum SWIGTYPE {
-  int result = SWIG_Matlab_Enum<$basetype>::asval($input, &$result);
-  if (!SWIG_IsOK(result)) {
-    %dirout_fail(result, "$type");
+  int swig_enum_status = SWIG_Matlab_Enum< $basetype >::asval($input, &$result);
+  if (!SWIG_IsOK(swig_enum_status)) {
+    %dirout_fail(swig_enum_status, "$type");
   }
 }
 %apply const enum SWIGTYPE & { const enum SWIGTYPE && };
