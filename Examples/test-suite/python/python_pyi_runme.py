@@ -90,7 +90,9 @@ for cls in py_tree.body:
     if isinstance(cls, ast.ClassDef) and cls.name == "OverloadedWidget":
         for method in cls.body:
             if isinstance(method, ast.FunctionDef):
-                line = py_source.splitlines()[method.lineno - 1]
+                # Python 3.7 locates decorated functions at their first decorator.
+                lines = py_source.splitlines()[method.lineno - 1:method.body[0].lineno - 1]
+                line = next(line for line in lines if line.lstrip().startswith("def " + method.name + "("))
                 expected_ignore = method.name in ("create", "evaluate", "count")
                 if ("type: ignore[override]" in line) != expected_ignore:
                     raise RuntimeError("Only overrides involving positional dispatch need suppression")
