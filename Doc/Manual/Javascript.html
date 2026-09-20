@@ -1100,8 +1100,11 @@ WebAssembly exceptions. Browser module packaging is not provided.
 <p>
 The initial runtime and TypeScript regression tests can be run with
 <tt>make check-wasm-js-test-suite</tt>. This requires <tt>em++</tt>,
-<tt>node</tt>, and <tt>tsc</tt> on PATH. The make variables <tt>EMCXX</tt>,
-<tt>NODE</tt>, <tt>TSC</tt>, and <tt>EMCXXFLAGS</tt> can override those defaults.
+<tt>node</tt>, and <tt>tsc</tt> on PATH. When configure finds all three,
+<tt>make check-test-suite</tt> includes these tests. Use <tt>--without-wasm-js</tt>
+to disable them. The configure variables <tt>EMCXX</tt>, <tt>WASM_NODE</tt> and
+<tt>WASM_TSC</tt> select the tools; the test makefile also accepts <tt>NODE</tt>,
+<tt>TSC</tt> and <tt>EMCXXFLAGS</tt> overrides.
 </p>
 
 </body>

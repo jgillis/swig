@@ -86,6 +86,7 @@ skip-r		= test -n "@SKIP_R@"
 skip-ruby	= test -n "@SKIP_RUBY@"
 skip-scilab     = test -n "@SKIP_SCILAB@"
 skip-tcl	= test -n "@SKIP_TCL@"
+skip-wasm-js = test -n "@SKIP_WASM_JS@"
 
 # Additional dependencies for some tests
 skip-android    = test -n "@SKIP_ANDROID@"
@@ -259,6 +260,15 @@ check-test-suite:				\
 	check-ruby-test-suite			\
 	check-scilab-test-suite			\
 	check-tcl-test-suite			\
+	check-wasm-js-test-suite			\
+
+.PHONY: check-wasm-js-test-suite
+check-wasm-js-test-suite:
+	@if $(skip-wasm-js) && test "$(NOSKIP)" != 1; then \
+	  echo "skipping wasm-js test-suite $(ACTION) (requires em++, node and tsc)"; \
+	else \
+	  $(MAKE) -C Examples/test-suite/wasm_js $(FLAGS) $(ACTION); \
+	fi
 
 check-%-test-suite: check-%-prepare
 	@if test -z "$(skip-$*)"; then					\
@@ -565,7 +575,3 @@ coverity:
 	curl --form file=@swig-coverity.tgz --form project=swig --form password=$(PASSWORD) --form email=$(EMAIL) http://scan5.coverity.com/cgi-bin/upload.py
 
 # Makefile ends here
-
-.PHONY: check-wasm-js-test-suite
-check-wasm-js-test-suite:
-	$(MAKE) -C Examples/test-suite/wasm_js check

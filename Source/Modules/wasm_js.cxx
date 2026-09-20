@@ -3231,51 +3231,20 @@ int WASM_JS::classHandler(Node *n) {
   Language::classHandler(n);
 
   if (stubs) {
-    /* Wrap collected member stubs with 'export class Name { ... }'.
-       TypeScript only supports single inheritance, but the C++ side
-       often has multiple bases (e.g. MX : public GenericExpressionCommon,
-       public GenericMatrix<MX>).  SWIG's 'bases' list mirrors C++
-       declaration order, which would make MX extend
-       GenericExpressionCommon -- losing access to 'GenMX::sym' and
-       other typed statics.  Pick the most informative base:
-
-         1. A base named 'Gen<ClassName>' (the GenericMatrix<> template
-            instantiation, where typed static 'sym(...)' lives).
-         2. Failing that, the first base whose class body has any
-            members beyond the default ctors.
-         3. Failing that, the first base in declaration order.
-
-       For instance-method members of *other* bases, emit a follow-up
-       'interface <Name> extends <OtherBases...>' so TypeScript's
-       declaration-merging pulls them in.  Statics don't merge through
-       interfaces, but the C++-side overloads on common bases are
-       overwhelmingly instance members. */
+    /* Match the runtime's first public base. Merge instance members from other bases
+       through an interface, since TypeScript classes only support one base class. */
     String *base_clause_ts = NewString("");
     String *iface_clause_ts = 0;
     List *bases = Getattr(n, "bases");
     if (bases && Len(bases) > 0) {
-      Node *primary = 0;
+      Node *primary = Getitem(bases, 0);
       List *secondary = NewList();
-      String *gen_target = NewStringf("Gen%s", class_jsname);
-      /* Pass 1: prefer Gen<ClassName>. */
-      for (int bi = 0; bi < Len(bases); ++bi) {
-        Node *b = Getitem(bases, bi);
-        String *bn = Getattr(b, "sym:name");
-        if (bn && Strcmp(bn, gen_target) == 0) {
-          primary = b;
-          break;
-        }
-      }
-      /* Pass 2: first base in declaration order. */
-      if (!primary)
-        primary = Getitem(bases, 0);
       /* All other bases land in secondary. */
       for (int bi = 0; bi < Len(bases); ++bi) {
         Node *b = Getitem(bases, bi);
         if (b != primary)
           Append(secondary, b);
       }
-      Delete(gen_target);
 
       String *bjsname = Getattr(primary, "sym:name");
       if (bjsname)

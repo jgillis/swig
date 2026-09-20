@@ -19,4 +19,17 @@ public:
 };
 int identify(Base *b) { return b->base(); }
 int identify(int n) { return n; }
+struct Left {
+  Left(): left_value(17) {}
+  int left_value;
+  static int left_static() { return 19; }
+};
+struct GenCombined {
+  GenCombined(): right_value(41) {}
+  int right_value;
+  int right() const { return right_value; }
+};
+struct Combined : Left, GenCombined {
+};
+int read_right(GenCombined *value) { return value->right_value; }
 %}

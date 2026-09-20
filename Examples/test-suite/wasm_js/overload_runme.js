@@ -11,4 +11,9 @@ require('./overload_wrap.js')().then((m) => {
   assert.strictEqual(m.identify(d), 17);
   assert.strictEqual(m.identify(23), 23);
   d.delete();
+  const combined = new m.Combined();
+  assert.strictEqual(combined.left_static(), 19);
+  assert.strictEqual(combined.right(), 41);
+  assert.strictEqual(m.read_right(combined), 41);
+  combined.delete();
 }).catch((error) => { console.error(error); process.exitCode = 1; });
