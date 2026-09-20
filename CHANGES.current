@@ -13,6 +13,10 @@ Version 4.6.0 (in progress)
             handling, exception translation, initial STL conversions and directors.
             Director callbacks retain shared callback objects independently, check
             integer return ranges and preserve embedded zeros in strings.
+            Enums preserve the compiler's underlying integer representation and
+            reject arguments outside its range. Unsigned tuple elements retain
+            their full value range. Primitive const reference results return
+            their values instead of treating wrapper pointers as values.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are

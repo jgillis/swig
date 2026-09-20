@@ -13,6 +13,46 @@
 #include <limits>
 #include <type_traits>
 
+/* Match the native integer representation without converting through floating point. */
+template <typename T> static jl_value_t *swig_jl_integer_box(T value) {
+  return std::is_signed<T>::value ? jl_box_int64(static_cast<int64_t>(value))
+                                 : jl_box_uint64(static_cast<uint64_t>(value));
+}
+
+template <typename E> static jl_datatype_t *swig_jl_enum_type() {
+  typedef typename std::underlying_type<E>::type T;
+  static_assert(sizeof(T) <= sizeof(uint64_t), "Julia enums support underlying integers up to 64 bits");
+  if (std::is_signed<T>::value) {
+    if (sizeof(T) == 1) return jl_int8_type;
+    if (sizeof(T) == 2) return jl_int16_type;
+    if (sizeof(T) == 4) return jl_int32_type;
+    return jl_int64_type;
+  }
+  if (sizeof(T) == 1) return jl_uint8_type;
+  if (sizeof(T) == 2) return jl_uint16_type;
+  if (sizeof(T) == 4) return jl_uint32_type;
+  return jl_uint64_type;
+}
+
+template <typename E> static jl_value_t *swig_jl_enum_box(E value) {
+  typedef typename std::underlying_type<E>::type T;
+  T native = static_cast<T>(value);
+  return jl_new_bits((jl_value_t *)swig_jl_enum_type<E>(), &native);
+}
+
+template <typename E> static E swig_jl_enum_read(jl_value_t *value) {
+  typedef typename std::underlying_type<E>::type T;
+  /* Calling the integer constructor accepts Julia enums and checks the range. */
+  jl_value_t *converted = jl_call1((jl_value_t *)swig_jl_enum_type<E>(), value);
+  if (jl_exception_occurred()) {
+    jl_exception_clear();
+    throw std::runtime_error("enum argument is outside its underlying integer range");
+  }
+  T native;
+  memcpy(&native, jl_data_ptr(converted), sizeof(T));
+  return static_cast<E>(native);
+}
+
 /* Keep integer sources integral: converting through double loses low bits. */
 template <typename T> static int swig_jl_asval(jl_value_t *p, T *value) {
   if (!p) return SWIG_ERROR;

@@ -125,12 +125,22 @@ Primitive pointers use Julia <tt>Ptr</tt> values and do not acquire a finalizer.
 </p>
 
 <p>
+Named enums use Julia enum types with the signedness and integer width selected
+by the C++ compiler. Enum values, including aliases and compound expressions,
+are evaluated in C++ rather than parsed as integer literals by SWIG. Scoped
+enum constants retain their Julia enum type; unscoped bare constants are
+integers. Integer arguments must fit the enum's underlying type. Enum return
+values preserve that type's full range.
+</p>
+
+<p>
 <tt>std_vector.i</tt>, <tt>std_pair.i</tt>, and <tt>std_string.i</tt> supply
 initial STL support. Vectors of <tt>double</tt>, <tt>long long</tt>, and
 <tt>std::string</tt> can be copied to and from native Julia vectors.
 Double vectors accept <tt>Vector{Float64}</tt> and <tt>Vector{Int64}</tt>;
 integer vectors accept <tt>Vector{Int64}</tt>; string vectors accept
-<tt>Vector{String}</tt>. Pair results can become Julia tuples. These are
+<tt>Vector{String}</tt>. Pair results can become Julia tuples; unsigned integer elements use
+<tt>UInt64</tt> so values above the signed integer range are preserved. These are
 copies; modifying a returned Julia array does not modify the C++ container.
 <tt>std_map.i</tt> only supplies declarations for interfaces that provide their
 own map conversion typemaps.

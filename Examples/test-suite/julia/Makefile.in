@@ -18,6 +18,7 @@ JULIAEXT = @JULIAEXT@
 override CPP_TEST_CASES = \
 	abstract_access \
 	constructor_copy \
+	cpp11_julia_enum_widths \
 	inherit \
 	julia_basic \
 	julia_containers \

@@ -23,7 +23,8 @@
 %typemap(ctype)  double, const double&, float, const float& "double"
 %typemap(in)     double, float %{ $1 = ($1_ltype)$input; %}
 %typemap(in)     const double& (double tmp), const float& (float tmp) %{ tmp = ($*1_ltype)$input; $1 = &tmp; %}
-%typemap(out)    double, const double&, float, const float& %{ $result = (double)$1; %}
+%typemap(out)    double, float %{ $result = (double)$1; %}
+%typemap(out)    const double&, const float& %{ $result = (double)*$1; %}
 %typemap(jltype) double, const double&, float, const float& "Cdouble"
 %typemap(jlparam) double, const double&, float, const float& "Real"
 %typemap(jlout)  double, const double&, float, const float& "_check($call)"
@@ -33,7 +34,8 @@
 %typemap(ctype) TYPE, const TYPE& "TYPE"
 %typemap(in) TYPE %{ $1 = ($1_ltype)$input; %}
 %typemap(in) const TYPE& (TYPE tmp) %{ tmp = $input; $1 = &tmp; %}
-%typemap(out) TYPE, const TYPE& %{ $result = (TYPE)$1; %}
+%typemap(out) TYPE %{ $result = (TYPE)$1; %}
+%typemap(out) const TYPE& %{ $result = (TYPE)*$1; %}
 %typemap(jltype) TYPE, const TYPE& "JTYPE"
 %typemap(jlparam) TYPE, const TYPE& "Integer"
 %typemap(jlout) TYPE, const TYPE& "_check($call)"
@@ -55,7 +57,8 @@ JULIA_INTEGER(size_t, Csize_t)
 %typemap(ctype)  bool, const bool& "unsigned char"
 %typemap(in)     bool %{ $1 = $input != 0; %}
 %typemap(in) const bool& (bool tmp) %{ tmp = $input != 0; $1 = &tmp; %}
-%typemap(out)    bool, const bool& %{ $result = $1 ? 1 : 0; %}
+%typemap(out)    bool %{ $result = $1 ? 1 : 0; %}
+%typemap(out)    const bool& %{ $result = *$1 ? 1 : 0; %}
 %typemap(jltype) bool, const bool& "Cuchar"
 %typemap(jlparam) bool, const bool& "Bool"
 %typemap(jlout)  bool, const bool& "_check($call) != 0"
@@ -117,14 +120,15 @@ JULIA_INTEGER(size_t, Csize_t)
 %typemap(directorout) double, float %{ if (!jl_typeis($input, jl_float64_type)) { throw std::runtime_error("expected Float64 director result"); } $result = ($1_ltype)jl_unbox_float64($input); %}
 %typemap(directorout) std::string %{ if (!jl_is_string($input)) { throw std::runtime_error("expected String director result"); } $result = std::string(jl_string_ptr($input), jl_string_len($input)); %}
 
-/* ---- enums: marshalled as their underlying integer (long long) ---- */
-%typemap(ctype)  enum SWIGTYPE, const enum SWIGTYPE& "long long"
-%typemap(in)     enum SWIGTYPE %{ $1 = ($1_ltype)(long long)$input; %}
-%typemap(in)     const enum SWIGTYPE& ($*1_ltype tmp) %{ tmp = ($*1_ltype)(long long)$input; $1 = &tmp; %}
-%typemap(out)    enum SWIGTYPE, const enum SWIGTYPE& %{ $result = (long long)$1; %}
-%typemap(jltype) enum SWIGTYPE, const enum SWIGTYPE& "Clonglong"
+/* ---- enums: checked conversion through the compiler's underlying type ---- */
+%typemap(ctype)  enum SWIGTYPE, const enum SWIGTYPE& "jl_value_t *"
+%typemap(in)     enum SWIGTYPE %{ $1 = swig_jl_enum_read<$1_ltype>($input); %}
+%typemap(in)     const enum SWIGTYPE& ($*1_ltype tmp) %{ tmp = swig_jl_enum_read<$*1_ltype>($input); $1 = &tmp; %}
+%typemap(out)    enum SWIGTYPE %{ $result = swig_jl_enum_box($1); %}
+%typemap(out)    const enum SWIGTYPE& %{ $result = swig_jl_enum_box(*$1); %}
+%typemap(jltype) enum SWIGTYPE, const enum SWIGTYPE& "Any"
 %typemap(jlparam) enum SWIGTYPE, const enum SWIGTYPE& "Union{Integer,Base.Enums.Enum}"
-%typemap(jlout)  enum SWIGTYPE, const enum SWIGTYPE& "Int(_check($call))"
+%typemap(jlout)  enum SWIGTYPE, const enum SWIGTYPE& "_check($call)"
 
 /* ---- generic class types: opaque pointer convention ---- */
 %typemap(ctype, out="void *") SWIGTYPE, SWIGTYPE&, const SWIGTYPE&, SWIGTYPE* "jl_value_t *"
@@ -327,7 +331,12 @@ static inline jl_value_t* swig_jl_make_tuple2(jl_value_t* a, jl_value_t* b) {
 %typemap(typecheck, precedence=SWIG_TYPECHECK_DOUBLE) double, const double&, float, const float& "$1 = 1;"
 %typemap(typecheck, precedence=SWIG_TYPECHECK_BOOL) bool, const bool& "$1 = 1;"
 %typemap(typecheck, precedence=SWIG_TYPECHECK_STRING) char *, const char *, std::string, const std::string& "$1 = 1;"
-%typemap(typecheck, precedence=SWIG_TYPECHECK_INTEGER) enum SWIGTYPE, const enum SWIGTYPE& "$1 = 1;"
+%typemap(typecheck, precedence=SWIG_TYPECHECK_INTEGER) enum SWIGTYPE %{
+  try { swig_jl_enum_read<$1_ltype>($input); $1 = 1; } catch (...) { $1 = 0; }
+%}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_INTEGER) const enum SWIGTYPE& %{
+  try { swig_jl_enum_read<$*1_ltype>($input); $1 = 1; } catch (...) { $1 = 0; }
+%}
 
 %typemap(throws) SWIGTYPE %{ (void)$1; throw; %}
 

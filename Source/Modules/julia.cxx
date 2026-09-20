@@ -1059,9 +1059,12 @@ public:
       res = NewStringf("jl_box_float64((double)(%s))", expr);
     else if (Strcmp(s, "bool") == 0)
       res = NewStringf("jl_box_bool((%s) ? 1 : 0)", expr);
-    else if (SwigType_isenum(r) || Strcmp(s, "int") == 0 || Strcmp(s, "long") == 0 || Strcmp(s, "long long") == 0 || Strcmp(s, "short") == 0 ||
-             Strcmp(s, "size_t") == 0 || Strstr(s, "unsigned"))
-      res = NewStringf("jl_box_int64((int64_t)(%s))", expr);
+    else if (SwigType_isenum(r))
+      res = NewStringf("swig_jl_enum_box(%s)", expr);
+    else if (SwigType_type(r) == T_INT || SwigType_type(r) == T_UINT || SwigType_type(r) == T_LONG || SwigType_type(r) == T_ULONG ||
+             SwigType_type(r) == T_LONGLONG || SwigType_type(r) == T_ULONGLONG || SwigType_type(r) == T_SHORT || SwigType_type(r) == T_USHORT ||
+             SwigType_type(r) == T_CHAR || SwigType_type(r) == T_SCHAR || SwigType_type(r) == T_UCHAR || Strcmp(s, "size_t") == 0)
+      res = NewStringf("swig_jl_integer_box(%s)", expr);
     else if (Strcmp(s, "std::string") == 0 || Strcmp(s, "string") == 0)
       res = NewStringf("jl_pchar_to_string((%s).data(), (%s).size())", expr, expr);
     else if (classLookup(r)) { /* class element: heap-copy + proxy wrap */
@@ -1870,58 +1873,62 @@ public:
       return Language::enumDeclaration(n);
     if (enum_seen && Getattr(enum_seen, ename))
       return Language::enumDeclaration(n);
-    /* collect members with C auto-increment; explicit values must be integer
-       literals (enumnumval). Bail to plain consts if any is a C++ expression. */
-    List *names = NewList();
-    List *vals = NewList();
-    bool ok = true;
-    long next = 0;
-    for (Node *c = firstChild(n); c && ok; c = nextSibling(c)) {
-      if (Strcmp(nodeType(c), "enumitem") != 0)
+    List *members = NewList();
+    for (Node *c = firstChild(n); c; c = nextSibling(c)) {
+      if (!Equal(nodeType(c), "enumitem") || GetFlag(c, "feature:ignore"))
         continue;
-      if (GetFlag(c, "feature:ignore"))
-        continue;
-      String *ev = Getattr(c, "enumvalue");
-      String *nv = Getattr(c, "enumnumval");
-      if (ev && !nv) {
-        ok = false;
-        break;
-      } /* non-literal C++ expression */
       String *mn = Getattr(c, "sym:name");
       if (!jl_identifier(mn)) {
-        ok = false;
-        break;
+        Delete(members);
+        return Language::enumDeclaration(n);
       }
-      if (nv)
-        next = (long)strtol(Char(nv), 0, 0);
-      Append(names, mn);
-      Append(vals, NewStringf("%ld", next));
-      ++next;
+      Append(members, c);
     }
-    if (!ok || Len(names) == 0) {
-      Delete(names);
-      Delete(vals);
-      return Language::enumDeclaration(n); /* fall back to integer consts */
+    if (!Len(members)) {
+      Delete(members);
+      return Language::enumDeclaration(n);
     }
-    /* typed @enum, instances named <Enum>_<member> to avoid clashing with the
-       bare integer consts (kept for back-compat) emitted via emit_children. */
-    String *prefix = NewStringf("%s_", ename);
-    Printf(f_jl_body, "@enum %s::Cint ", ename);
-    for (int i = 0; i < Len(names); ++i) {
-      String *inst = NewStringf("%s%s", prefix, Getitem(names, i));
-      Printf(f_jl_body, "%s=%s ", inst, Getitem(vals, i));
-      add_export(inst);
-      Delete(inst);
+    for (int i = 0; i < Len(members); ++i) {
+      Node *c = Getitem(members, i);
+      String *instance = NewStringf("%s_%s", ename, Getattr(c, "sym:name"));
+      Setattr(c, "julia:enuminstance", instance);
+      Delete(instance);
     }
-    Printf(f_jl_body, "\n");
+    int result = Language::enumDeclaration(n);
+    for (int i = Len(members) - 1; i >= 0; --i) {
+      if (!Getattr(Getitem(members, i), "julia:enumgetter"))
+        Delitem(members, i);
+    }
+    if (!Len(members)) {
+      Delete(members);
+      return result;
+    }
+    /* Values and representation come from C++, including expressions, aliases
+       and implicit increments after ignored members. Julia requires unique
+       values in '@enum'; additional C++ names become aliases afterwards. */
+    Printf(f_jl_body, "let names = [");
+    for (int i = 0; i < Len(members); ++i)
+      Printf(f_jl_body, "%s:%s", i ? ", " : "", Getattr(Getitem(members, i), "julia:enuminstance"));
+    Printf(f_jl_body, "], values = [");
+    for (int i = 0; i < Len(members); ++i)
+      Printf(f_jl_body, "%sccall((:%s, _lib), Any, ())", i ? ", " : "", Getattr(Getitem(members, i), "julia:enumgetter"));
+    Printf(f_jl_body,
+           "]\n  items = Expr[]\n  seen = Set()\n"
+           "  for (name, value) in zip(names, values)\n"
+           "    if !(value in seen)\n      push!(items, :($name = $value))\n      push!(seen, value)\n    end\n  end\n"
+           "  @eval @enum %s::$(typeof(first(values))) $(items...)\n"
+           "  empty!(seen)\n  for (name, value) in zip(names, values)\n"
+           "    if value in seen\n      @eval const $name = %s($value)\n    end\n    push!(seen, value)\n  end\nend\n",
+           ename,
+           ename);
+    for (int i = 0; i < Len(members); ++i)
+      add_export(Getattr(Getitem(members, i), "julia:enuminstance"));
     add_export(ename);
     if (!enum_seen)
       enum_seen = NewHash();
     Setattr(enum_seen, ename, "1");
-    Delete(prefix);
-    Delete(names);
-    Delete(vals);
-    return Language::enumDeclaration(n); /* also emit bare integer consts */
+    Delete(members);
+    return result;
   }
 
   virtual int constantWrapper(Node *n) {
@@ -1935,7 +1942,16 @@ public:
     String *ts = SwigType_str(t, 0);
     /* class-scope: reference the fully-qualified C++ name in the getter */
     String *cref = (class_jlname && Getattr(n, "name")) ? Getattr(n, "name") : value;
-    if (Strcmp(ts, "int") == 0 || Strcmp(ts, "long") == 0 || Strstr(ts, "long long")) {
+    if (Equal(nodeType(n), "enumitem")) {
+      String *getter = NewStringf("_swig_const_%s", symname);
+      Printf(f_wrappers, "extern \"C\" jl_value_t *%s() { return swig_jl_enum_box(%s); }\n", getter, cref);
+      Setattr(n, "julia:enumgetter", getter);
+      if (!Equal(symname, Getattr(n, "julia:enuminstance"))) {
+        Printf(f_jl_body, "const %s = ccall((:%s, _lib), Any, ())\n", symname, getter);
+        add_export(symname);
+      }
+      Delete(getter);
+    } else if (Strcmp(ts, "int") == 0 || Strcmp(ts, "long") == 0 || Strstr(ts, "long long")) {
       /* The value may be a qualified C++ name; emit a C getter. */
       Printf(f_wrappers, "extern \"C\" long long _swig_const_%s() { return (long long)(%s); }\n", symname, cref);
       Printf(f_jl_body, "const %s = Int(ccall((:_swig_const_%s, _lib), Clonglong, ()))\n", symname, symname);

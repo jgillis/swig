@@ -18,3 +18,10 @@ for value in (Inf, -Inf, NaN, 0.5, 2.0^63, -2.0^64, "wrong")
 end
 @test boxed_roundtrip(12.0) == 12
 GC.gc()
+
+@test int_result() === Cint(-123)
+@test unsigned_result() === typemax(UInt64)
+@test float_result() === 1.25
+@test double_result() === -2.5
+@test bool_result(false) === false
+@test bool_result(true) === true
