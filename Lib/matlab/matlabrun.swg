@@ -17,7 +17,12 @@ static void SWIG_Error_va(int code, const char *format, va_list arg) {
 SWIGRUNTIME void SWIG_Error(int code, const char *msg) {
   SWIG_lasterror_code = code;
   free(SWIG_lasterror_msg);
-  SWIG_lasterror_msg = msg ? strdup(msg) : NULL;
+  SWIG_lasterror_msg = NULL;
+  if (msg) {
+    size_t size = strlen(msg) + 1;
+    SWIG_lasterror_msg = (char *)malloc(size);
+    if (SWIG_lasterror_msg) memcpy(SWIG_lasterror_msg, msg, size);
+  }
 }
 
 SWIGRUNTIME void SWIG_Error_Format(int code, const char *format, ...) {
@@ -160,17 +165,12 @@ void SWIG_Matlab_ExitFcn(void) {
 SWIGRUNTIME int
 SWIG_Matlab_CallInterp(int nlhs, mxArray *plhs[], int nrhs,
                        mxArray *prhs[], const char *functionName) {
-#ifdef HAVE_OCTAVE
-  return mexCallMATLAB(nlhs, plhs, nrhs, prhs, functionName);
-#else
   mxArray* ex = mexCallMATLABWithTrap(nlhs, plhs, nrhs, prhs, functionName);
   if (ex) {
     mxDestroyArray(ex);
     return 1;
-  } else {
-    return 0;
   }
-#endif
+  return 0;
 }
 
 SWIGRUNTIME void SWIG_Matlab_Error(const char *message) {
@@ -201,15 +201,7 @@ SWIGRUNTIME void SWIG_Matlab_ErrorId(const char *errorid, const char *message) {
 SWIGRUNTIME mxArray*
 SWIG_Matlab_CallInterpEx(int nlhs, mxArray *plhs[], int nrhs,
                        mxArray *prhs[], const char *functionName) {
-#ifdef HAVE_OCTAVE
-  int flag = mexCallMATLAB(nlhs, plhs, nrhs, prhs, functionName);
-  if (flag) {
-    SWIG_Matlab_ErrorId("SWIG:CallInterpEx","Not implemented for Octave");
-  }
-  return 0;
-#else
   return mexCallMATLABWithTrap(nlhs, plhs, nrhs, prhs, functionName);
-#endif
 }
 
 /* Convert a packed value value */
@@ -330,7 +322,7 @@ SWIGRUNTIME SwigPtr* SWIG_Matlab_getSwigPtr(mxArray* pm) {
   mxDestroyArray(pm_ptr);
 
   /* Consistency check */
-  if (p->self != p) return 0;
+  if (!p || p->self != p) return 0;
 
   /* Get pointer object */
   return p;

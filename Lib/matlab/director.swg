@@ -41,6 +41,37 @@
 
 namespace Swig {
 
+  /* mxArray owners unwind before an exception crosses the MEX gateway. */
+  class MxArray {
+    mxArray *value;
+    MxArray(const MxArray &);
+    MxArray &operator=(const MxArray &);
+  public:
+    MxArray(mxArray *p = 0) : value(p) {}
+    ~MxArray() { if (value) mxDestroyArray(value); }
+    operator mxArray *() const { return value; }
+    MxArray &operator=(mxArray *p) {
+      if (value != p) {
+        if (value) mxDestroyArray(value);
+        value = p;
+      }
+      return *this;
+    }
+  };
+
+  class MxArrayOutputs {
+    mxArray **values;
+    size_t count;
+    MxArrayOutputs(const MxArrayOutputs &);
+    MxArrayOutputs &operator=(const MxArrayOutputs &);
+  public:
+    MxArrayOutputs(mxArray **p, size_t n) : values(p), count(n) {}
+    ~MxArrayOutputs() {
+      for (size_t i = 0; i < count; ++i)
+        if (values[i]) mxDestroyArray(values[i]);
+    }
+  };
+
   /* memory handler */
   struct GCItem {
     virtual ~GCItem() {}
@@ -216,25 +247,13 @@ namespace Swig {
       return ss.str();
     }
 
-    /* decrement the reference count of the wrapped matlab object */
+    /* Every director constructor stores a reference, regardless of ownership. */
     void swig_decref() {
-      if (swig_disown_flag) {
-        //mexPrintf("decref to %d\n", swig_refcount-1);
-
-        if (--swig_refcount==0) {
-          // Delete MATLAB storage
-          std::string fname = fieldname();
-          mxArray* field = mxCreateString(fname.c_str());
-          mxArray* empty = mxCreateDoubleMatrix(0, 0, mxREAL);
-          mxArray* rhs[2] = {field, empty};
-          int error = SWIG_Matlab_CallInterp(0, 0, 2, rhs, "SwigStorage");
-          mxDestroyArray(field);
-          mxDestroyArray(empty);
-          if (error) {
-            SWIG_Matlab_ErrorId("SWIG:Director:swig_decref", "Cannot call SwigStorage");
-          }
-        }
-      }
+      std::string fname = fieldname();
+      MxArray field(mxCreateString(fname.c_str()));
+      MxArray empty(mxCreateDoubleMatrix(0, 0, mxREAL));
+      mxArray *rhs[2] = {field, empty};
+      SWIG_Matlab_CallInterp(0, 0, 2, rhs, "SwigStorage");
     }
 
   public:

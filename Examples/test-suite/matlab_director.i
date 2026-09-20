@@ -5,12 +5,22 @@
 %typemap(directorargout) int &extra { $1 = (int)mxGetScalar($result); }
 #endif
 %inline %{
+static int live_callbacks = 0;
+static int active_calls = 0;
+struct CallGuard {
+  CallGuard() { ++active_calls; }
+  ~CallGuard() { --active_calls; }
+};
+int callback_count() { return live_callbacks; }
+int active_call_count() { return active_calls; }
 struct Callback {
-  virtual ~Callback() {}
+  Callback() { ++live_callbacks; }
+  virtual ~Callback() { --live_callbacks; }
   virtual int value(int x) { return x; }
   virtual int split(int x, int &extra) { extra = x + 1; return x; }
 };
 int invoke(Callback &callback, int value) {
+  CallGuard guard;
   return callback.value(value);
 }
 int invoke_split(Callback &callback, int value) {

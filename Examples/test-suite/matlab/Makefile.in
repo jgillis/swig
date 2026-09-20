@@ -25,6 +25,12 @@ include $(srcdir)/../common.mk
 
 SWIGOPT += -w524
 
+# Run the tests with MATLAB scripts, including newly added runtime regressions.
+.PHONY: check-runtime
+check-runtime: $(foreach name,$(CPP_TEST_CASES),$(if $(wildcard $(srcdir)/$(name)_runme.m),$(name).cpptest)) \
+               $(foreach name,$(C_TEST_CASES),$(if $(wildcard $(srcdir)/$(name)_runme.m),$(name).ctest)) \
+               $(foreach name,$(MULTI_CPP_TEST_CASES),$(if $(wildcard $(srcdir)/$(name)_runme.m),$(name).multicpptest))
+
 # Custom tests - tests with additional commandline options
 # none!
 

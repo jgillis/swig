@@ -116,6 +116,8 @@ characters outside the byte range are rejected. This mapping does not perform
 UTF-8 encoding. MATLAB's <tt>string</tt> objects require an explicit conversion
 to a character vector. With <tt>%include &lt;std_wstring.i&gt;</tt>, wide strings
 map to MATLAB UTF-16 code units; native wide characters above 65535 are rejected.
+Octave uses byte characters instead, so this mapping preserves its UTF-8 bytes
+and rejects native wide characters above 255.
 </p>
 <p>
 Include the corresponding standard library interface and instantiate a
@@ -157,7 +159,13 @@ to override C++ virtual methods in a MATLAB subclass. The subclass constructor
 must call the generated superclass constructor. The <tt>matlab_director</tt>
 regression demonstrates virtual dispatch and a custom <tt>directorargout</tt>
 typemap for multiple MATLAB outputs. Director support is experimental, including
-cross-runtime exception handling and ownership of callback objects.
+ownership of callback objects. Director subclasses are retained in persistent
+MATLAB storage so that native calls can reach them. Call <tt>delete(callback)</tt>
+explicitly when a MATLAB owned director is no longer needed; clearing the last
+workspace variable alone does not release this retained reference. Native
+destruction removes the stored reference. Invalid callback return values and
+callback errors are translated to MATLAB errors at the MEX gateway after native
+stack cleanup.
 </p>
 
 <H2><a name="Matlab_customization">42.6 Customizing generated code</a></H2>
