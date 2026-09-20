@@ -3,6 +3,18 @@ async function check() {
   const m = await createModule();
   const n: number = m.choose(2);
   const s: string = m.choose('a');
+  const ranked: number = m.ranked(3);
+  const fuzzy = new m.Fuzzy(3);
+  const member: number = fuzzy.member(3);
+  const stat: number = m.Fuzzy.stat(3);
+  // @ts-expect-error The preferred overlapping overload returns a number.
+  const wrongGlobal: string = m.ranked(3);
+  // @ts-expect-error Instance dispatch and declarations share overload priority.
+  const wrongMember: string = fuzzy.member(3);
+  // @ts-expect-error Static dispatch and declarations share overload priority.
+  const wrongStatic: string = m.Fuzzy.stat(3);
+  // @ts-expect-error Fuzzy numeric overloads do not accept strings.
+  new m.Fuzzy('wrong');
   const d = new m.Derived();
   const b: number = d.base();
   const combined = new m.Combined();

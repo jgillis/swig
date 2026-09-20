@@ -4,6 +4,19 @@ require('./director_wrap.js')().then((m) => {
     wide(n) { return n + 1n; }
     call(n) { assert.strictEqual(typeof n, 'number'); return 3 * n; }
   }
+  const handles = m.handle_count();
+  for (let i = 0; i < 20; ++i) {
+    const temporary = new Callback();
+    assert.strictEqual(m.invoke(temporary, 2), 6);
+    temporary.delete();
+    m.set_constructor_failure(true);
+    try {
+      assert.throws(() => new Callback());
+    } finally {
+      m.set_constructor_failure(false);
+    }
+    assert.strictEqual(m.handle_count(), handles);
+  }
   const base = new m.Callback();
   const callback = new Callback();
   assert.strictEqual(m.invoke(base, 4), 5);
@@ -14,6 +27,8 @@ require('./director_wrap.js')().then((m) => {
   const owned = m.make_callback();
   assert.strictEqual(owned.call(2), 3);
   owned.delete();
+  borrowed.delete();
   base.delete();
   callback.delete();
+  assert.strictEqual(m.handle_count(), handles);
 }).catch((error) => { console.error(error); process.exitCode = 1; });

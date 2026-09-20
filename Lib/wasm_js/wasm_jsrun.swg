@@ -1,22 +1,8 @@
-/* wasm_jsrun.swg -- wasm-js runtime glue.  Raw C++ included
-   verbatim into the "runtime" slot of the generated wrapper via
-   %insert(runtime) "wasm_jsrun.swg".
-
-   Defines the language-specific SWIG runtime entry points expected by
-   the SWIG standard typemap library.  Mirrors matlabrun.swg but
-   skips the SwigPtr chain / SWIG_TypeCheck walk: wasm_js doesn't
-   emit per-class swig_type_info tables -- the JS-side proxy class
-   hierarchy enforces type integrity by class identity.
-
-   Wire format:
-     A wrapped object crosses the wasm boundary as an EM_VAL handle
-     (an i32 index into Embind's value table).  This is the wasm-js
-     analog of MATLAB's mxArray* and Python's PyObject*.  On the JS
-     side, the SWIG proxy class instance carries a '_ptr' property
-     (the underlying C++ pointer); SWIG_ConvertPtr below unwraps the
-     val via emscripten::val and reads '_ptr' to recover that pointer.
-     SWIG_NewPointerObj builds a JS object '{_ptr: <int>}' and returns
-     its EM_VAL handle for the JS side to wrap in the proxy class. */
+/* WebAssembly runtime support for JavaScript value handles and SWIG proxies.
+   Wrapped objects cross the wasm boundary as EM_VAL handles. Their '_ptr'
+   stores the native address, and '_swig_type' identifies the SWIG type for
+   checked pointer conversion and inheritance adjustment. Registered class
+   factories create owning or borrowed proxies for native results. */
 
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
@@ -81,17 +67,36 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* swig_last_error_msg(void) {
 #define SWIGINTERNINLINE static inline
 #endif
 
+/* The generator specializes this trait for registered wrapped classes. */
+namespace swig_wasmjs {
+using emscripten::val;
+inline val borrowed_value(EM_VAL handle) {
+  val borrowed = val::take_ownership(handle);
+  val owned(borrowed);
+  borrowed.release_ownership();
+  return owned;
+}
+
+template <class T> struct type_descriptor {
+  static swig_type_info *get() { return 0; }
+};
+}
+
+
 SWIGRUNTIME int
 SWIG_WASMJS_ConvertPtrAndOwn(EM_VAL obj, void **pptr, swig_type_info *type,
                              int SWIGUNUSEDPARM(flags), int *own) {
   if (!obj) return SWIG_ERROR;
-  emscripten::val v = emscripten::val::take_ownership(obj);
+  emscripten::val v = swig_wasmjs::borrowed_value(obj);
+  const std::string kind = v.typeOf().as<std::string>();
+  if (v.isNull() || v.isUndefined() || (kind != "object" && kind != "function"))
+    return SWIG_ERROR;
   bool has_ptr = v.hasOwnProperty("_ptr");
   if (!has_ptr) {
-    v.release_ownership();
     return SWIG_ERROR;
   }
   uintptr_t raw = v["_ptr"].as<uintptr_t>();
+  if (!raw) return SWIG_ERROR;
   void *p = reinterpret_cast<void*>(raw);
   bool type_ok = true;
   if (type) {
@@ -133,7 +138,6 @@ SWIG_WASMJS_ConvertPtrAndOwn(EM_VAL obj, void **pptr, swig_type_info *type,
       }
     }
   }
-  v.release_ownership();
   if (!type_ok) return SWIG_ERROR;
   if (pptr) *pptr = p;
   if (own)  *own  = 0;
@@ -166,7 +170,7 @@ SWIG_WASMJS_ConvertPtr(EM_VAL obj, void **pptr, swig_type_info *type, int flags)
    SwigPtr.own. */
 SWIGRUNTIME EM_VAL
 SWIG_WASMJS_NewPointerObj(void *ptr, swig_type_info *type, int flags) {
-  if (!ptr) return 0;
+  if (!ptr) return emscripten::val::null().release_ownership();
   if (type && type->clientdata) {
     const char *js_name = (const char *)type->clientdata;
     std::string attr = "__wrap_";
@@ -194,8 +198,8 @@ SWIG_WASMJS_NewPointerObj(void *ptr, swig_type_info *type, int flags) {
    Usage from JS:
      const h = Module.__swig_take_handle(jsObj);
      Module._swig_foo(h);          // wasm receives the EM_VAL via i32
-     // h is consumed by the wasm side (val::take_ownership decrefs on
-     // scope exit), so JS must NOT decref / use h after the call.
+     // exported wrappers own h using RAII; conversion helpers borrow it.
+     // JS must not release or reuse h after the call.
 
    And the reverse for returns:
      const val = Module.__swig_release_handle(h);  // h came from wasm */

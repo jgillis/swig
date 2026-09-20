@@ -22,29 +22,37 @@
 
 #include <emscripten/val.h>
 #include <type_traits>
+#include <cmath>
+#include <limits>
 %}
 
 %define %wasm_js_primtype_asval(T)
 %fragment(SWIG_AsVal_frag(T), "header") {
 SWIGINTERN int SWIG_AsVal_dec(T)(void* p, T* val) {
   if (!p) return SWIG_ERROR;
-  emscripten::val v = emscripten::val::take_ownership(
-      reinterpret_cast< ::emscripten::EM_VAL >(p));
+  emscripten::val v = swig_wasmjs::borrowed_value(reinterpret_cast< ::emscripten::EM_VAL >(p));
   std::string ty = v.typeOf().as<std::string>();
   bool ok = (ty == "number" || ty == "bigint");
-  if (ok) {
-    double d = (ty == "bigint")
-      ? emscripten::val::global("Number")(v).as<double>()
-      : v.as<double>();
-
-    if (std::is_integral< T >::value &&
-        d != static_cast<double>(static_cast<long long>(d))) {
-      ok = false;
-    } else if (val) {
-      *val = static_cast< T >(d);
+  if (ok && ty == "bigint" && std::is_integral<T>::value) {
+    emscripten::val bounded = emscripten::val::global("BigInt").call<emscripten::val>(
+        std::is_signed<T>::value ? "asIntN" : "asUintN", static_cast<unsigned>(sizeof(T) * 8), v);
+    ok = bounded.strictlyEquals(v);
+    if (ok && val) {
+      if (sizeof(T) == 8) *val = v.as<T>();
+      else *val = static_cast<T>(emscripten::val::global("Number")(v).as<double>());
     }
+  } else if (ok) {
+    double d = ty == "bigint" ? emscripten::val::global("Number")(v).as<double>() : v.as<double>();
+    if (std::is_integral<T>::value) {
+      double bound = std::ldexp(1.0, std::numeric_limits<T>::digits);
+      ok = std::isfinite(d) && std::trunc(d) == d && d >= (std::is_signed<T>::value ? -bound : 0.0) && d < bound;
+    } else if (std::isfinite(d)) {
+      ok = d >= -static_cast<double>(std::numeric_limits<T>::max()) && d <= static_cast<double>(std::numeric_limits<T>::max());
+    } else if (ty == "bigint") {
+      ok = false;
+    }
+    if (ok && val) *val = static_cast<T>(d);
   }
-  v.release_ownership();
   return ok ? SWIG_OK : SWIG_ERROR;
 }
 }
@@ -53,9 +61,7 @@ SWIGINTERN int SWIG_AsVal_dec(T)(void* p, T* val) {
 %define %wasm_js_primtype_from(T)
 %fragment(SWIG_From_frag(T), "header") {
 SWIGINTERNINLINE void* SWIG_From_dec(T)(T value) {
-  T* p = (T*)std::malloc(sizeof(T));
-  *p = value;
-  return p;
+  return reinterpret_cast<void *>(emscripten::val(value).release_ownership());
 }
 }
 %enddef
@@ -65,32 +71,29 @@ SWIGINTERNINLINE void* SWIG_From_dec(T)(T value) {
 %wasm_js_primtype_from(T)
 %enddef
 
-/* bool: special-cased.  JS 'true'/'false' map to bool; permissively
-   also accept truthy numbers (so '0' / '1' from BigInt round-trip). */
+/* Boolean fragments accept only JavaScript booleans. */
 %fragment(SWIG_AsVal_frag(bool), "header") {
 SWIGINTERN int SWIG_AsVal_dec(bool)(void* p, bool* val) {
   if (!p) return SWIG_ERROR;
-  emscripten::val v = emscripten::val::take_ownership(
-      reinterpret_cast< ::emscripten::EM_VAL >(p));
+  emscripten::val v = swig_wasmjs::borrowed_value(reinterpret_cast< ::emscripten::EM_VAL >(p));
   std::string ty = v.typeOf().as<std::string>();
-  /* Strict: only a real JS boolean is a bool.  Numbers must NOT
-     masquerade as bool, else GenericType dispatch picks OT_BOOL for
-     numeric options (ipopt.max_iter -> true -> 1) and overload dispatch
-     lets Slice(int,bool) shadow Slice(int,int). */
+  /* Boolean and numeric overloads remain distinct. */
   bool ok = (ty == "boolean");
   if (ok && val) *val = v.as<bool>();
-  v.release_ownership();
   return ok ? SWIG_OK : SWIG_ERROR;
 }
 }
 %fragment(SWIG_From_frag(bool), "header") {
 SWIGINTERNINLINE void* SWIG_From_dec(bool)(bool value) {
-  int* p = (int*)std::malloc(sizeof(int));
-  *p = value ? 1 : 0;
-  return p;
+  return reinterpret_cast<void *>(emscripten::val(value).release_ownership());
 }
 }
 
+%wasm_js_primtype(char)
+%wasm_js_primtype(signed char)
+%wasm_js_primtype(unsigned char)
+%wasm_js_primtype(short)
+%wasm_js_primtype(unsigned short)
 %wasm_js_primtype(int)
 %wasm_js_primtype(long)
 %wasm_js_primtype(long long)

@@ -1,7 +1,10 @@
-/* Minimal STL bindings for wasm_js. We use the opaque-pointer convention */
-/* — std::vector / std::map / std::pair cross the wasm boundary as void* */
-/* to a C++ container built JS-side. SWIG only needs the template names */
-/* so %template() std::vector<X>; instantiations parse cleanly. */
-%include "std_vector.i"
-%include "std_map.i"
-%include "std_pair.i"
+%include <std_string.i>
+%include <std_vector.i>
+%include <std_deque.i>
+%include <std_list.i>
+%include <std_map.i>
+%include <std_unordered_map.i>
+%include <std_set.i>
+%include <std_unordered_set.i>
+%include <std_pair.i>
+%include <std_array.i>

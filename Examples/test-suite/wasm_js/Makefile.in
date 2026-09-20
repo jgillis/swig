@@ -6,7 +6,28 @@ EMCXX = @EMCXX@
 NODE = @WASM_NODE@
 TSC = @WASM_TSC@
 EMCXXFLAGS = -O0 -Werror -fwasm-exceptions
-TEST_CASES = basic constructor_handle director overload
+SHARED_TEST_CASES = \
+	li_std_pair \
+	li_std_vector_enum
+TEST_CASES = \
+	basic \
+	constants \
+	constructor_handle \
+	director \
+	extend \
+	li_std_pair \
+	li_std_vector_enum \
+	overload \
+	primitive_fragments \
+	scalar_references \
+	stl_containers \
+	stl_legacy_vector \
+	stl_nested \
+	stl_ownership \
+	stl_references \
+	stl_typemaps \
+	stl_values \
+	typemap_cleanup
 
 .PHONY: check partialcheck unsupported clean distclean
 check: $(TEST_CASES:=.cpptest) unsupported
@@ -14,11 +35,11 @@ check: $(TEST_CASES:=.cpptest) unsupported
 partialcheck: $(TEST_CASES:=.generate) unsupported
 
 %.generate:
-	$(SWIG) -w524 -Werror -c++ -wasm-js -stubs -o $*_wrap.cxx $(srcdir)/$*.i
+	$(SWIG) -w524 -Werror -c++ -wasm-js -stubs -o $*_wrap.cxx $(if $(filter $(SHARED_TEST_CASES),$*),$(srcdir)/../$*.i,$(srcdir)/$*.i)
 
 %.cpptest:
-	$(SWIG) -w524 -Werror -c++ -wasm-js -stubs -o $*_wrap.cxx $(srcdir)/$*.i
-	$(EMCXX) $(EMCXXFLAGS) -lembind $*_wrap.cxx -sMODULARIZE=1 -sEXPORT_NAME=createWasm -sEXPORTED_RUNTIME_METHODS='["UTF8ToString","lengthBytesUTF8","stringToUTF8"]' -sEXPORTED_FUNCTIONS=@$*_wrap.cxx.exports -o $*_wrap_wasm.js
+	$(SWIG) -w524 -Werror -c++ -wasm-js -stubs -o $*_wrap.cxx $(if $(filter $(SHARED_TEST_CASES),$*),$(srcdir)/../$*.i,$(srcdir)/$*.i)
+	$(EMCXX) $(EMCXXFLAGS) -lembind $*_wrap.cxx -sMODULARIZE=1 -sEXPORT_NAME=createWasm -sEXPORTED_RUNTIME_METHODS='["UTF8ToString","lengthBytesUTF8","stringToUTF8","count_emval_handles"]' -sEXPORTED_FUNCTIONS=@$*_wrap.cxx.exports -o $*_wrap_wasm.js
 	cp $(srcdir)/$*_runme.js $*_test.js
 	$(NODE) $*_test.js
 	cp $(srcdir)/$*_types.ts $*_test.ts
@@ -31,7 +52,7 @@ distclean: clean
 	rm -f Makefile
 
 unsupported:
-	@for name in global extend import; do \
+	@for name in global import; do \
 	  if $(SWIG) -w524 -Werror -c++ -wasm-js -o unsupported_$$name.cxx $(srcdir)/unsupported_$$name.i >unsupported_$$name.log 2>&1; then \
 	    cat unsupported_$$name.log; exit 1; \
 	  fi; \

@@ -11,6 +11,8 @@ Version 4.6.0 (in progress)
             [JavaScript] Add an experimental -wasm-js target for C++ bindings using
             Emscripten WebAssembly and a Node.js CommonJS wrapper. The -stubs
             option generates TypeScript declarations for the module factory.
+            Standard library interfaces support native JavaScript container values
+            and wrapped mutable containers, including recursive element conversion.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are

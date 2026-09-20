@@ -59,8 +59,6 @@ public:
     global_overload_counts(0),
     cpp_to_js_class(0),
     mangle_to_jsname(0),
-    cpp_to_js_vector_class(0),
-    is_vector_jsname(0),
     indexed_classes(0),
     js_to_cpp_canonical(0),
     classes_needing_probes(0),
@@ -69,6 +67,8 @@ public:
     static_overloads(0),
     member_overloads(0),
     stub_free_fn_buckets(0),
+    stub_method_buckets(0),
+    stub_method_order(0),
     stub_free_fn_order(0),
     stub_static_instance_pending(0),
     class_has_base(false),
@@ -100,12 +100,7 @@ public:
   virtual int staticmembervariableHandler(Node *n) {
     return unsupported(n, "Static member variable wrapping");
   }
-  virtual int constantWrapper(Node *n) {
-    return enum_cname ? SWIG_OK : unsupported(n, "Constant wrapping");
-  }
-  virtual int extendDirective(Node *n) {
-    return unsupported(n, "%extend");
-  }
+  virtual int constantWrapper(Node *n);
   virtual int importDirective(Node *n) {
     return unsupported(n, "%import");
   }
@@ -140,44 +135,30 @@ public:
       if (jsname && t) {
         String *cn = SwigType_str(t, 0);
         Setattr(cpp_to_js_class, cn, jsname);
+        SwigType *pointer = Copy(t);
+        SwigType_add_pointer(pointer);
+        String *tag = SwigType_manglestr(pointer);
+        Setattr(cpp_to_js_class, tag, jsname);
+        Delete(tag);
+        Delete(pointer);
         /* Reverse map: JS class name -> canonical cpp form.  Used at
            end-of-top() to emit swig_can_<Class> probe wrappers. */
         if (!js_to_cpp_canonical)
           js_to_cpp_canonical = NewHash();
         if (!Getattr(js_to_cpp_canonical, jsname)) {
-          Setattr(js_to_cpp_canonical, jsname, Copy(cn));
-        }
-        /* Track std::vector<...> instantiations separately so call-site
-           codegen can auto-convert JS arrays <-> XVector at the boundary. */
-        bool is_vector = (Len(cn) > 12 && strncmp(Char(cn), "std::vector<", 12) == 0);
-        if (is_vector) {
-          if (!cpp_to_js_vector_class)
-            cpp_to_js_vector_class = NewHash();
-          Setattr(cpp_to_js_vector_class, cn, jsname);
-          /* Sibling table keyed by JS class name: O(1) "is this JS class a
-             vector wrapper?" check at dispatcher emit time, replacing a
-             linear scan over cpp_to_js_vector_class values. */
-          if (!is_vector_jsname)
-            is_vector_jsname = NewHash();
-          Setattr(is_vector_jsname, jsname, "1");
+          Setattr(js_to_cpp_canonical, jsname, t);
         }
         if (Swig_scopename_check(cn)) {
           String *bare = Swig_scopename_last(cn);
           Setattr(cpp_to_js_class, bare, jsname);
-          if (is_vector)
-            Setattr(cpp_to_js_vector_class, bare, jsname);
           Delete(bare);
         }
         String *ns = SwigType_namestr(t);
         if (ns && Strcmp(ns, cn) != 0) {
           Setattr(cpp_to_js_class, ns, jsname);
-          if (is_vector)
-            Setattr(cpp_to_js_vector_class, ns, jsname);
           if (Swig_scopename_check(ns)) {
             String *bare = Swig_scopename_last(ns);
             Setattr(cpp_to_js_class, bare, jsname);
-            if (is_vector)
-              Setattr(cpp_to_js_vector_class, bare, jsname);
             Delete(bare);
           }
         }
@@ -189,35 +170,6 @@ public:
     /* Recurse into children + siblings. */
     prepopulate_class_names(firstChild(n));
     prepopulate_class_names(nextSibling(n));
-  }
-
-  /* If 'rt' is a registered std::vector<...> instantiation, return the
-     JS vector class name (e.g. "MXVector"); else 0.  Uses the canonical
-     trim-and-lookup helper against the cpp_to_js_vector_class table. */
-  String *vector_class_name(SwigType *rt) {
-    if (!rt || !cpp_to_js_vector_class)
-      return 0;
-    /* Variant 1: direct print. */
-    String *cn = SwigType_str(rt, 0);
-    String *bare = trim_cpp_qualifiers(cn);
-    String *hit = (String *)Getattr(cpp_to_js_vector_class, bare);
-    Delete(bare);
-    Delete(cn);
-    if (hit)
-      return Len(hit) > 0 ? hit : 0;
-    /* Variant 2: typedef-resolved. */
-    SwigType *t = Copy(rt);
-    SwigType *resolved = SwigType_typedef_resolve_all(t);
-    if (resolved) {
-      String *rstr = SwigType_str(resolved, 0);
-      String *rbare = trim_cpp_qualifiers(rstr);
-      hit = (String *)Getattr(cpp_to_js_vector_class, rbare);
-      Delete(rbare);
-      Delete(rstr);
-      Delete(resolved);
-    }
-    Delete(t);
-    return hit && Len(hit) > 0 ? hit : 0;
   }
 
   virtual int classHandler(Node *n);
@@ -291,17 +243,7 @@ protected:
   Hash *global_overload_counts; /* module-level: fname -> "N" */
   Hash *cpp_to_js_class;
   Hash *mangle_to_jsname;
-  Hash *cpp_to_js_vector_class;
-  Hash *is_vector_jsname; /* Inverted: JS class name -> "1" if it
-                              was registered as a vector wrapper.
-                              O(1) check at dispatcher-emit time
-                              vs the linear scan over
-                              cpp_to_js_vector_class values. */
-  Hash *indexed_classes;  /* JS class name -> "1" for classes with
-                              %feature("wasmjs:index") (SX/MX/DM):
-                              their instances are wrapped in an
-                              element-indexing Proxy (x[k], x[k]=v,
-                              x[[i,j]], x["a:b"], x.nz[k]). */
+  Hash *indexed_classes;
   Hash *js_to_cpp_canonical;
   Hash *classes_needing_probes; /* JS class names referenced from any
                                     dispatcher.  Drives probe-wrapper
@@ -325,13 +267,12 @@ protected:
                               non-static member methods.  Lets
                               Sparsity.row(k) and Sparsity.row()
                               coexist via args.length dispatch. */
-  /* Per-jsname bucket of free-function TS stub overloads, populated
-     during stub_emit_function(kind=0).  Each entry is
-     List<Hash{precedence, body}>; drained at top()-end and emitted
-     sorted ascending by precedence so TS overload-resolution picks
-     the most-specific matching overload (Sparsity < DM < SX < MX),
-     mirroring Swig_overload_rank's compile-time ranking. */
+  /* TypeScript declaration buckets retain the same ranking snapshots
+     as runtime dispatchers. Emit each overload group in canonical order
+     because TypeScript selects the first matching declaration. */
   Hash *stub_free_fn_buckets;
+  Hash *stub_method_buckets;
+  List *stub_method_order;
   /* Preserves first-encounter order of buckets for deterministic
      emission. */
   List *stub_free_fn_order;
@@ -344,15 +285,7 @@ protected:
   bool class_has_base;
 
   String *mangle(const String *s) {
-    String *r = NewString(s);
-    Replaceall(r, "::", "_");
-    Replaceall(r, "<", "_");
-    Replaceall(r, ">", "_");
-    Replaceall(r, ",", "_");
-    Replaceall(r, " ", "");
-    Replaceall(r, "&", "");
-    Replaceall(r, "*", "");
-    return r;
+    return Swig_name_mangle_string(s);
   }
 
   void register_export(const char *swig_name) {
@@ -394,12 +327,21 @@ protected:
 
     Swig_typemap_attach_parms("jstypecheck", q, 0);
     String *jstc = Getattr(q, "tmap:jstypecheck");
-    if (jstc && Len(jstc) > 0) {
+    bool scalar_handle = Equal(Getattr(q, "tmap:ctype"), "EM_VAL") && GetFlag(q, "tmap:jstypecheck:wasmjs_scalar");
+    if (jstc && Len(jstc) > 0 && !scalar_handle) {
       String *expr = Copy(jstc);
       String *idx = NewStringf("args[%d]", pi);
       Replaceall(expr, "$input", idx);
       Delete(idx);
       return expr;
+    }
+    if (Equal(Getattr(q, "tmap:ctype"), "EM_VAL")) {
+      String *probe = register_typecheck_probe(q, pi);
+      if (Len(probe))
+        return probe;
+      Delete(probe);
+      if (scalar_handle)
+        return NULL;
     }
     String *cls = lookup_js_class(t);
     if (cls && Len(cls) > 0) {
@@ -440,7 +382,7 @@ protected:
     }
     /* Fall-through: try the typecheck-probe path for container types
        (map/pair/vector) that don't have a JS class proxy. */
-    String *probe_expr = register_typecheck_probe(t, pi);
+    String *probe_expr = register_typecheck_probe(q, pi);
     if (probe_expr && Len(probe_expr) > 0)
       return probe_expr;
     if (probe_expr)
@@ -448,78 +390,47 @@ protected:
     return NULL;
   }
 
-  String *register_typecheck_probe(SwigType *t, int parm_idx) {
-    if (!t)
+  String *register_typecheck_probe(Parm *original, int index) {
+    SwigType *type = Getattr(original, "type");
+    String *parameter_name = Getattr(original, "name");
+    Parm *parameter = NewParm(type, parameter_name, 0);
+    Setattr(parameter, "lname", "result");
+    Swig_typemap_attach_parms("typecheck", parameter, 0);
+    bool has_check = Getattr(parameter, "tmap:typecheck") != 0;
+    if (Equal(Getattr(original, "tmap:ctype"), "EM_VAL") && GetFlag(parameter, "tmap:typecheck:wasmjs_scalar"))
+      has_check = false;
+    Delete(parameter);
+    if (!has_check)
       return NewString("");
-    /* Strip cv, reference and pointer qualifiers down to the canonical type for mangling.  ltype gives
-       us the "language type" (no const, no reference) which mangles
-       cleanly. */
-    SwigType *lt = SwigType_ltype(t);
-    SwigType *bare = lt ? lt : Copy(t);
-    /* SwigType_ltype rewrites references as pointers (C has no '&').
-       For typecheck-probe purposes we want the VALUE type, so peel
-       any leading pointer too.  Otherwise the probe ends up
-       instantiating can_convert<std::map<...>*> instead of
-       can_convert<std::map<...>>, which never compiles or always
-       returns false. */
-    if (SwigType_isreference(bare))
-      SwigType_del_reference(bare);
-    if (SwigType_ispointer(bare))
-      SwigType_del_pointer(bare);
-
-    SwigType *resolved = SwigType_typedef_resolve_all(bare);
-    SwigType *effective = resolved ? resolved : bare;
-    String *cpp_resolved = SwigType_str(effective, 0);
-    if (!cpp_resolved || Len(cpp_resolved) == 0) {
-      Delete(cpp_resolved);
-      if (resolved)
-        Delete(resolved);
-      Delete(bare);
-      return NewString("");
-    }
-    /* Only probe for "container-shaped" types: map, pair, unwrapped
-       vector.  Class types should have gone through lookup_js_class
-       first; primitives are handled by the typeof check upstream. */
-    const char *cs = Char(cpp_resolved);
-    bool is_container = (strstr(cs, "std::map") != 0) || (strstr(cs, "std::pair") != 0) || (strstr(cs, "std::vector") != 0);
-    if (!is_container) {
-      Delete(cpp_resolved);
-      if (resolved)
-        Delete(resolved);
-      Delete(bare);
-      return NewString("");
-    }
-    /* Mangle the RESOLVED type so the probe wrapper's body sees the
-       fully-expanded T (the typedef may not be visible at the
-       %insert("header") fragment boundary). */
-    String *mangled = SwigType_manglestr(effective); /* "_std__mapT_..._t" */
-    /* Drop leading underscore so the symbol reads 'swig_can_std__map...',
-       consistent with 'swig_can_<Class>' naming. */
-    const char *mc = Char(mangled);
-    while (*mc == '_')
-      ++mc;
-    String *probe_id = NewString(mc);
+    SwigType *resolved = SwigType_typedef_resolve_all(type);
+    SwigType *effective = resolved ? resolved : type;
+    String *mangled = Swig_name_mangle_string(effective);
+    String *named = parameter_name ? mangle(parameter_name) : NewString("value");
+    String *probe_id = NewStringf("type%s_%s", mangled, named);
+    Delete(named);
     if (!types_needing_typecheck_probes)
       types_needing_typecheck_probes = NewHash();
-    Setattr(types_needing_typecheck_probes, probe_id, cpp_resolved);
-    String *expr = NewStringf("M._swig_can_%s(__unwrap(args[%d]))", Char(probe_id), parm_idx);
+    Parm *probe_parameter = NewParm(effective, parameter_name, 0);
+    Setattr(types_needing_typecheck_probes, probe_id, probe_parameter);
+    Delete(probe_parameter);
+    String *expression = NewStringf("M._swig_can_%s(__unwrap(args[%d]))", probe_id, index);
     Delete(probe_id);
     Delete(mangled);
-    Delete(cpp_resolved);
-    if (resolved)
-      Delete(resolved);
-    Delete(bare);
-    return expr;
+    Delete(resolved);
+    return expression;
   }
 
   /* Emit a conversion probe using the target's typecheck typemap, or the
      standard pointer conversion for a wrapped class. */
-  void emit_conversion_probe(const String *name, SwigType *type) {
-    Parm *p = NewParm(type, "value", 0);
+  void emit_conversion_probe(const String *name, SwigType *type, const String *parameter_name = 0) {
+    Parm *p = NewParm(type, parameter_name, 0);
     Setattr(p, "lname", "result");
     Swig_typemap_attach_parms("typecheck", p, 0);
     String *tm = Getattr(p, "tmap:typecheck");
-    Printf(f_cpp_wrappers, "EMSCRIPTEN_KEEPALIVE int %s(EM_VAL p) {\n", name);
+    Printf(f_cpp_wrappers,
+           "EMSCRIPTEN_KEEPALIVE int %s(EM_VAL p) {\n"
+           "  emscripten::val _input_owner = p ? emscripten::val::take_ownership(p) : emscripten::val::undefined();\n",
+           name);
     if (tm) {
       String *body = Copy(tm);
       Replaceall(body, "$input", "p");
@@ -547,9 +458,7 @@ protected:
       return;
     for (Iterator it = First(types_needing_typecheck_probes); it.key; it = Next(it)) {
       String *name = NewStringf("swig_can_%s", it.key);
-      SwigType *type = NewString(it.item);
-      emit_conversion_probe(name, type);
-      Delete(type);
+      emit_conversion_probe(name, Getattr(it.item, "type"), Getattr(it.item, "name"));
       Delete(name);
     }
   }
@@ -643,6 +552,7 @@ protected:
      exist in practice. */
   String *parm_prologue(ParmList *p) {
     Swig_typemap_attach_parms("in", p, 0);
+    Swig_typemap_attach_parms("freearg", p, 0);
     String *out = NewString("");
     int s = 0;      /* 0-based JS-arg index (a0, a1, ...) */
     int argnum = 1; /* 1-based SWIG argnum for typemap_locals mangling */
@@ -652,16 +562,20 @@ protected:
       if (tm) {
         SwigType *t = Getattr(q, "type");
         String *lname = Getattr(q, "lname");
-        String *ltype = SwigType_lstr(t, 0);
+        SwigType *value_type = cplus_value_type(t);
+        String *ltype = SwigType_lstr(value_type ? value_type : t, lname);
+        Delete(value_type);
         /* Outer-scope local: declared once at wrapper top so the call */
         /* site (parm_args) can reference it without scope hopping. */
-        Printf(out, "  %s %s;\n", ltype, lname);
+        Printf(out, "  %s{};\n", ltype);
         Delete(ltype);
 
         /* Make a working copy of the body — we may rewrite identifiers */
         /* in it as we emit '(T m)' locals.  Function scope, not block */
         /* scope (heap-allocated locals would dangle past block close). */
         String *body = Copy(tm);
+        String *free_map = Getattr(q, "tmap:freearg");
+        String *cleanup = free_map && Len(free_map) ? Copy(free_map) : 0;
 
         /* Typemap-declared '(T m)' locals: replicate SWIG core's */
         /* typemap_locals mangling (rename to 'm<argnum>', substitute */
@@ -675,16 +589,27 @@ protected:
           if (!raw_name || Len(raw_name) == 0)
             continue;
           String *mangled = NewStringf("%s%d", raw_name, argnum);
-          String *lts = SwigType_str(lt, 0);
-          Printf(out, "  %s %s;\n", lts, mangled);
+          String *lts = SwigType_str(lt, mangled);
+          String *initializer = Getattr(lp, "value");
+          if (initializer)
+            Printf(out, "  %s = %s;\n", lts, initializer);
+          else
+            Printf(out, "  %s{};\n", lts);
           Replace(body, raw_name, mangled, DOH_REPLACE_ID);
+          if (cleanup)
+            Replace(cleanup, raw_name, mangled, DOH_REPLACE_ID);
           Delete(lts);
           Delete(mangled);
         }
 
-        /* Wrap the typemap body itself in a fresh '{ }' scope. */
-        Printf(out, "  {\n");
         String *oname = skip_obj ? NewString("__numinputs0_no_input") : obj_name(s);
+        if (cleanup) {
+          Replaceall(cleanup, "$input", oname);
+          Printf(out, "  auto _cleanup%d = swig_wasmjs::make_cleanup([&]() {\n%s\n  });\n", argnum, cleanup);
+          Delete(cleanup);
+        }
+        /* The guard also runs when this conversion fails after allocating temporary storage. */
+        Printf(out, "  {\n");
         Replaceall(body, "$input", oname);
         Printf(out, "    %s\n", body);
         Printf(out, "  }\n");
@@ -698,34 +623,10 @@ protected:
     return out;
   }
 
-  /* Emit per-parm freearg blocks, $input substituted to obj<S>. */
-  String *parm_freeargs(ParmList *p) {
-    Swig_typemap_attach_parms("freearg", p, 0);
-    Swig_typemap_attach_parms("in", p, 0); /* for numinputs check */
-    String *out = NewString("");
-    int s = 0;
-    for (Parm *q = p; q; q = nextSibling(q)) {
-      bool skip_obj = is_in_numinputs0(q);
-      String *tm = Getattr(q, "tmap:freearg");
-      if (tm) {
-        String *body = Copy(tm);
-        String *oname = skip_obj ? NewString("__numinputs0_no_input") : obj_name(s);
-        Replaceall(body, "$input", oname);
-        Printf(out, "  %s\n", body);
-        Delete(body);
-        Delete(oname);
-      }
-      if (!skip_obj)
-        ++s;
-    }
-    return out;
-  }
-
   /* C++ call-site arg list. Parms with an 'in' typemap pass via the lname
      local (arg<N>) populated by parm_prologue; parms without pass obj<S>
-     directly.  Reference-typed parms get a leading '*' since SwigType_lstr
-     gave the local pointer type (T* arg1) but the wrapped function takes
-     T&.  Attach is idempotent so order vs. parm_prologue doesn't matter. */
+     directly. Canonical SWIG casts restore reference and nested pointer
+     qualifiers removed from the local storage type. Attach is idempotent. */
   String *parm_args(ParmList *p) {
     Swig_typemap_attach_parms("in", p, 0);
     String *out = NewString("");
@@ -739,9 +640,9 @@ protected:
       first = false;
       if (tm) {
         SwigType *t = Getattr(q, "type");
-        if (SwigType_isreference(t))
-          Printv(out, "*", NIL);
-        Printv(out, Getattr(q, "lname"), NIL);
+        String *argument = SwigType_rcaststr(t, Getattr(q, "lname"));
+        Printv(out, argument, NIL);
+        Delete(argument);
       } else {
         String *oname = obj_name(s);
         Printv(out, oname, NIL);
@@ -901,26 +802,14 @@ protected:
             Printf(out, "      const a%d = %s;\n", s, vs);
             emitted = true;
           } else {
-            /* Empty-ctor defaults: 'Dict()', 'MXVector()', 'DM()', ...
-               Map to a JS literal that the call-site conversion path
-               can ingest:
-                 Dict / std::map<...>  -> {}   (auto-converts via
-                                                to_ptr<map> for wasm-js)
-                 vector<...>           -> []   (auto-converts via
-                                                __arr_to_vec)
-                 MX / SX / DM / Sparsity / ... -> 'new <Cls>()' (no-arg
-                                                                 ctor)
-               Without this, the JS fallback 'a<N> = undefined' then
-               '__unwrap(undefined)' returns null EM_VAL and the wasm
-               side's to_ptr rejects with "Failed to convert input N
-               to type '<T>'". */
+            /* Empty standard containers use native JavaScript values; wrapped classes use their default constructor. */
             int vlen = (int)strlen(vs);
             if (vlen >= 2 && vs[vlen - 1] == ')' && vs[vlen - 2] == '(') {
               /* "<Type>()" -- empty ctor. */
-              if (strstr(cs, "std::map") || strstr(cs, "Dict")) {
-                Printf(out, "      const a%d = {};\n", s);
+              if (strncmp(cs, "std::map<", 9) == 0 || strncmp(cs, "std::unordered_map<", 19) == 0) {
+                Printf(out, "      const a%d = new Map();\n", s);
                 emitted = true;
-              } else if (strstr(cs, "std::vector") || strstr(cs, "Vector")) {
+              } else if (strncmp(cs, "std::vector<", 12) == 0 || strncmp(cs, "std::deque<", 11) == 0 || strncmp(cs, "std::list<", 10) == 0) {
                 Printf(out, "      const a%d = [];\n", s);
                 emitted = true;
               } else if (t) {
@@ -950,7 +839,7 @@ protected:
   /* Emit a JS method body: jsin prologue per parm, wasm call, jsout to
      marshal return, jsfree per parm post-call.  Skips numinputs=0 parms
      entirely (no JS-side input, no wasm-export arg). */
-  String *emit_js_body(ParmList *p, SwigType *rt, const String *swig_name, const char *self_prefix) {
+  String *emit_js_body(ParmList *p, SwigType *rt, const String *swig_name, const char *self_prefix, Node *context = 0, bool marshal_output = true) {
     Swig_typemap_attach_parms("jsin", p, 0);
     Swig_typemap_attach_parms("jsarg", p, 0);
     Swig_typemap_attach_parms("jsfree", p, 0);
@@ -958,6 +847,24 @@ protected:
     Swig_typemap_attach_parms("ctype", p, 0);
 
     String *out = NewString("");
+    List *cleanups = NewList();
+
+    int argument_index = 0;
+    for (Parm *parameter = p; parameter; parameter = nextSibling(parameter)) {
+      if (is_in_numinputs0(parameter))
+        continue;
+      String *check = build_arg_check(parameter, argument_index);
+      if (check && Len(check)) {
+        String *from = NewStringf("args[%d]", argument_index);
+        String *to = NewStringf("a%d", argument_index);
+        Replaceall(check, from, to);
+        Printf(out, "      if (!(%s)) throw new TypeError('Invalid argument %d');\n", check, argument_index + 1);
+        Delete(from);
+        Delete(to);
+      }
+      Delete(check);
+      ++argument_index;
+    }
 
     /* Prologue: emit per-parm jsin typemaps with $input/$argnum subst. */
     int s = 0;
@@ -965,7 +872,7 @@ protected:
       if (is_in_numinputs0(q))
         continue;
       String *tm = Getattr(q, "tmap:jsin");
-      if (tm) {
+      if (tm && !(Equal(Getattr(q, "tmap:ctype"), "EM_VAL") && GetFlag(q, "tmap:jsin:wasmjs_scalar"))) {
         String *body = Copy(tm);
         String *aname = NewStringf("a%d", s);
         String *idxs = NewStringf("%d", s);
@@ -975,6 +882,19 @@ protected:
         Delete(body);
         Delete(aname);
         Delete(idxs);
+      }
+      String *cleanup = Getattr(q, "tmap:jsfree");
+      if (cleanup) {
+        String *body = Copy(cleanup);
+        String *argument = NewStringf("a%d", s);
+        String *index = NewStringf("%d", s);
+        Replaceall(body, "$input", argument);
+        Replaceall(body, "$argnum", index);
+        Append(cleanups, body);
+        Printf(out, "      try {\n");
+        Delete(body);
+        Delete(argument);
+        Delete(index);
       }
       ++s;
     }
@@ -997,7 +917,7 @@ protected:
       String *tm = Getattr(q, "tmap:jsarg");
       String *aname = NewStringf("a%d", s);
       String *idxs = NewStringf("%d", s);
-      if (tm) {
+      if (tm && !(Equal(Getattr(q, "tmap:ctype"), "EM_VAL") && GetFlag(q, "tmap:jsarg:wasmjs_scalar"))) {
         String *expr = Copy(tm);
         Replaceall(expr, "$input", aname);
         Replaceall(expr, "$argnum", idxs);
@@ -1034,41 +954,12 @@ protected:
       raw_call = NewStringf("__chk(M._%s(%s))", swig_name, call_args);
     }
     SwigType *eff_rt = effective_js_return_type(rt, p);
-    String *marshalled = js_marshal_return(eff_rt ? eff_rt : rt, Char(raw_call));
+    String *marshalled = marshal_output ? js_marshal_return(eff_rt ? eff_rt : rt, Char(raw_call), context) : Copy(raw_call);
 
-    /* Count parms that need post-call cleanup. */
-    int n_free = 0;
-    for (Parm *q = p; q; q = nextSibling(q)) {
-      if (is_in_numinputs0(q))
-        continue;
-      if (Getattr(q, "tmap:jsfree"))
-        ++n_free;
-    }
-
-    if (n_free == 0) {
-      Printf(out, "      return %s;\n", marshalled);
-    } else {
-      Printf(out, "      const __r = %s;\n", marshalled);
-      s = 0;
-      for (Parm *q = p; q; q = nextSibling(q)) {
-        if (is_in_numinputs0(q))
-          continue;
-        String *tm = Getattr(q, "tmap:jsfree");
-        if (tm) {
-          String *body = Copy(tm);
-          String *aname = NewStringf("a%d", s);
-          String *idxs = NewStringf("%d", s);
-          Replaceall(body, "$input", aname);
-          Replaceall(body, "$argnum", idxs);
-          Printv(out, body, NIL);
-          Delete(body);
-          Delete(aname);
-          Delete(idxs);
-        }
-        ++s;
-      }
-      Printf(out, "      return __r;\n");
-    }
+    Printf(out, "      return %s;\n", marshalled);
+    for (int index = Len(cleanups) - 1; index >= 0; --index)
+      Printf(out, "      } finally {\n%s\n      }\n", Getitem(cleanups, index));
+    Delete(cleanups);
     Delete(call_args);
     Delete(raw_call);
     Delete(marshalled);
@@ -1139,6 +1030,16 @@ protected:
   String *lookup_js_class(SwigType *rt) {
     if (!rt || !cpp_to_js_class)
       return NULL;
+    SwigType *canonical = SwigType_typedef_resolve_all(rt);
+    SwigType *pointer = SwigType_base(canonical ? canonical : rt);
+    SwigType_add_pointer(pointer);
+    String *tag = SwigType_manglestr(pointer);
+    String *registered = Getattr(cpp_to_js_class, tag);
+    Delete(tag);
+    Delete(pointer);
+    Delete(canonical);
+    if (registered)
+      return registered;
     /* Variant 1: direct print. */
     String *cname = SwigType_str(rt, 0);
     String *bare = trim_cpp_qualifiers(cname);
@@ -1185,10 +1086,10 @@ protected:
           'new JsName(__PRIVATE_CTOR, $call)' so callers receive a JS
           proxy instance instead of a raw void* pointer.
        3. Else identity (primitive returns: bigint / number / void). */
-  String *js_marshal_return(SwigType *rt, const char *expr) {
+  String *js_marshal_return(SwigType *rt, const char *expr, Node *context = 0) {
     if (!rt)
       return NewString(expr);
-    Parm *fake = NewParm(rt, NewString("result"), 0);
+    Parm *fake = NewParm(rt, context ? Getattr(context, "name") : 0, 0);
     Setattr(fake, "lname", "result");
     Swig_typemap_attach_parms("jsout", fake, 0);
     String *tm = Getattr(fake, "tmap:jsout");
@@ -1224,13 +1125,13 @@ protected:
     return r;
   }
 
-  String *cpp_return_type(SwigType *rt) {
+  String *cpp_return_type(SwigType *rt, Node *context = 0) {
     if (!rt)
       return NewString("void");
     String *ts = SwigType_str(rt, 0);
     if (Cmp(ts, "void") == 0)
       return ts;
-    Parm *fake = NewParm(rt, NewString("result"), 0);
+    Parm *fake = NewParm(rt, context ? Getattr(context, "name") : 0, 0);
     Setattr(fake, "lname", "result");
     Swig_typemap_attach_parms("ctype", fake, 0);
     String *tm = Getattr(fake, "tmap:ctype");
@@ -1297,12 +1198,17 @@ protected:
     }
 
     String *cpp = NewStringWithSize(s, n);
+    if (SwigType_isenum(cpp)) {
+      Delete(cpp);
+      return NewString("number");
+    }
 
     if (Strcmp(cpp, "bool") == 0) {
       Delete(cpp);
       return NewString("boolean");
     }
-    if (Strcmp(cpp, "int") == 0) {
+    if (Strcmp(cpp, "int") == 0 || Strcmp(cpp, "short") == 0 || Strcmp(cpp, "unsigned short") == 0 || Strcmp(cpp, "signed char") == 0 ||
+        Strcmp(cpp, "unsigned char") == 0) {
       Delete(cpp);
       return NewString("number");
     }
@@ -1340,7 +1246,7 @@ protected:
     }
     if (Strcmp(cpp, "size_t") == 0) {
       Delete(cpp);
-      return NewString("bigint");
+      return NewString("number");
     }
     if (Strcmp(cpp, "std::string") == 0) {
       Delete(cpp);
@@ -1352,19 +1258,15 @@ protected:
     }
     if (Strcmp(cpp, "std::size_t") == 0) {
       Delete(cpp);
-      return NewString("bigint");
-    }
-    if (Strcmp(cpp, "size_t") == 0) {
-      Delete(cpp);
-      return NewString("bigint");
+      return NewString("number");
     }
     if (Strcmp(cpp, "void") == 0) {
       Delete(cpp);
       return NewString("void");
     }
-    if (Strcmp(cpp, "char") == 0) {
+    if (Strcmp(cpp, "char") == 0 || Strncmp(cpp, "enum ", 5) == 0) {
       Delete(cpp);
-      return NewString("string");
+      return NewString("number");
     }
     /* Standard library streams aren't crossed across the wasm boundary -- bind any. */
     if (Strcmp(cpp, "std::istream") == 0 || Strcmp(cpp, "istream") == 0 || Strcmp(cpp, "std::ostream") == 0 || Strcmp(cpp, "ostream") == 0) {
@@ -1372,74 +1274,54 @@ protected:
       return NewString("any");
     }
 
-    /* std::vector<T>  ->  T[]. */
+    /* Render native container shapes recursively, ignoring allocator/comparator parameters. */
     const char *cs = Char(cpp);
     int cn = Len(cpp);
-    if (cn > 12 && strncmp(cs, "std::vector<", 12) == 0 && cs[cn - 1] == '>') {
-      String *inner = NewStringWithSize(cs + 12, cn - 13);
-      String *inner_ts = cpp_to_ts(inner);
-      String *r = NewStringf("%s[]", Char(inner_ts));
-      Delete(inner);
-      Delete(inner_ts);
+    const char *opening = strchr(cs, '<');
+    if (opening && cn > 0 && cs[cn - 1] == '>') {
+      String *container = NewStringWithSize(cs, opening - cs);
+      bool sequence = Equal(container, "std::vector") || Equal(container, "std::list") || Equal(container, "std::deque") || Equal(container, "std::array");
+      bool mapping = Equal(container, "std::map") || Equal(container, "std::multimap") || Equal(container, "std::unordered_map");
+      bool set = Equal(container, "std::set") || Equal(container, "std::multiset") || Equal(container, "std::unordered_set");
+      bool pair = Equal(container, "std::pair");
+      Delete(container);
+      if (sequence || mapping || set || pair) {
+        List *arguments = NewList();
+        const char *start = opening + 1;
+        int depth = 0;
+        for (const char *at = start; at < cs + cn; ++at) {
+          if ((*at == ',' && depth == 0) || at == cs + cn - 1) {
+            String *argument = NewStringWithSize(start, at - start);
+            Append(arguments, argument);
+            Delete(argument);
+            start = at + 1;
+          } else if (*at == '<') {
+            ++depth;
+          } else if (*at == '>') {
+            --depth;
+          }
+        }
+        if (Len(arguments) >= ((mapping || pair) ? 2 : 1)) {
+          String *first = cpp_to_ts(Getitem(arguments, 0));
+          String *second = (mapping || pair) ? cpp_to_ts(Getitem(arguments, 1)) : 0;
+          String *result = sequence  ? NewStringf("Array<%s>", first)
+                           : set     ? NewStringf("Set<%s>", first)
+                           : mapping ? NewStringf("Map<%s, %s>", first, second)
+                                     : NewStringf("[%s, %s]", first, second);
+          Delete(first);
+          Delete(second);
+          Delete(arguments);
+          Delete(cpp);
+          return result;
+        }
+        Delete(arguments);
+      }
+    }
+    String *registered = lookup_bare(cpp);
+    if (registered) {
+      String *result = Copy(registered);
       Delete(cpp);
-      return r;
-    }
-    /* std::map<K, V>  ->  Record<K, V>. */
-    if (cn > 9 && strncmp(cs, "std::map<", 9) == 0 && cs[cn - 1] == '>') {
-      /* Find top-level comma between K and V. */
-      int depth = 0;
-      int comma = -1;
-      for (int i = 9; i < cn - 1; ++i) {
-        if (cs[i] == '<')
-          depth++;
-        else if (cs[i] == '>')
-          depth--;
-        else if (cs[i] == ',' && depth == 0) {
-          comma = i;
-          break;
-        }
-      }
-      if (comma > 0) {
-        String *k = NewStringWithSize(cs + 9, comma - 9);
-        String *v = NewStringWithSize(cs + comma + 1, cn - 1 - comma - 1);
-        String *k_ts = cpp_to_ts(k);
-        String *v_ts = cpp_to_ts(v);
-        String *r = NewStringf("Record<%s, %s>", Char(k_ts), Char(v_ts));
-        Delete(k);
-        Delete(v);
-        Delete(k_ts);
-        Delete(v_ts);
-        Delete(cpp);
-        return r;
-      }
-    }
-    /* std::pair<A, B>  ->  [A, B]. */
-    if (cn > 10 && strncmp(cs, "std::pair<", 10) == 0 && cs[cn - 1] == '>') {
-      int depth = 0;
-      int comma = -1;
-      for (int i = 10; i < cn - 1; ++i) {
-        if (cs[i] == '<')
-          depth++;
-        else if (cs[i] == '>')
-          depth--;
-        else if (cs[i] == ',' && depth == 0) {
-          comma = i;
-          break;
-        }
-      }
-      if (comma > 0) {
-        String *a = NewStringWithSize(cs + 10, comma - 10);
-        String *b = NewStringWithSize(cs + comma + 1, cn - 1 - comma - 1);
-        String *a_ts = cpp_to_ts(a);
-        String *b_ts = cpp_to_ts(b);
-        String *r = NewStringf("[%s, %s]", Char(a_ts), Char(b_ts));
-        Delete(a);
-        Delete(b);
-        Delete(a_ts);
-        Delete(b_ts);
-        Delete(cpp);
-        return r;
-      }
+      return result;
     }
 
     /* Pointer / reference suffix: drop -- types cross the wasm
@@ -1551,6 +1433,49 @@ protected:
     return out;
   }
 
+  String *type_to_ts(SwigType *type, bool output) {
+    SwigType *resolved = SwigType_typedef_resolve_all(type);
+    SwigType *effective = resolved ? resolved : type;
+    String *name = SwigType_str(effective, 0);
+    String *native = cpp_to_ts(name);
+    String *proxy = lookup_js_class(type);
+    bool container = Strncmp(native, "Array<", 6) == 0 || Strncmp(native, "Map<", 4) == 0 || Strncmp(native, "Set<", 4) == 0 || Strncmp(native, "[", 1) == 0;
+    Parm *mapped = NewParm(type, 0, 0);
+    Swig_typemap_attach_parms(output ? "out" : "in", mapped, 0);
+    bool proxy_map = GetFlag(mapped, output ? "tmap:out:tsstub_proxy" : "tmap:in:tsstub_proxy");
+    bool nullable = GetFlag(mapped, output ? "tmap:out:tsstub_nullable" : "tmap:in:tsstub_nullable");
+    Delete(mapped);
+    bool pointer = SwigType_ispointer(effective);
+    bool mutable_reference = false;
+    if (SwigType_isreference(effective)) {
+      SwigType *referent = Copy(effective);
+      SwigType_del_reference(referent);
+      mutable_reference = !SwigType_isconst(referent);
+      Delete(referent);
+    }
+    if (container && proxy && (pointer || mutable_reference || proxy_map)) {
+      Delete(native);
+      native = Copy(proxy);
+    } else if (container && proxy && !output) {
+      String *input = NewStringf("%s | %s", native, proxy);
+      Delete(native);
+      native = input;
+    }
+    if (container && !output && !pointer && !mutable_reference && Strncmp(native, "Map<string, ", 12) == 0) {
+      String *shape = cpp_to_ts(name);
+      String *record = Copy(shape);
+      Replace(record, "Map<", "Record<", DOH_REPLACE_FIRST);
+      Printf(native, " | %s", record);
+      Delete(record);
+      Delete(shape);
+    }
+    if (nullable)
+      Append(native, " | null");
+    Delete(name);
+    Delete(resolved);
+    return native;
+  }
+
   String *pick_ts_stub(Parm *pj, bool is_output) {
     const char *attr = is_output ? "tmap:in:tsstub_out" : "tmap:in:tsstub_in";
     String *raw = Getattr(pj, attr);
@@ -1561,9 +1486,7 @@ protected:
       /* Fallback: render the parm's C++ type through cpp_to_ts. */
       SwigType *t = Getattr(pj, "type");
       if (t) {
-        String *sname = SwigType_str(t, 0);
-        base = cpp_to_ts(sname);
-        Delete(sname);
+        base = type_to_ts(t, is_output);
       } else {
         base = NewString("any");
       }
@@ -1729,7 +1652,7 @@ protected:
         String *po = 0;
         Parm *out_fake = 0;
         if (rt) {
-          out_fake = NewParm(rt, NewString("result"), 0);
+          out_fake = NewParm(rt, Getattr(source, "name"), 0);
           Setattr(out_fake, "lname", "result");
           Swig_typemap_attach_parms("out", out_fake, 0);
           po = Getattr(out_fake, "tmap:out:tsstub_out");
@@ -1738,10 +1661,8 @@ protected:
         if (po && Len(po) > 0) {
           raw = Copy(po);
         } else {
-          String *sname = rt ? SwigType_str(rt, 0) : 0;
-          if (sname) {
-            raw = cpp_to_ts(sname);
-            Delete(sname);
+          if (rt) {
+            raw = type_to_ts(rt, true);
           } else {
             raw = NewString("any");
           }
@@ -1783,27 +1704,82 @@ protected:
     Delete(argout_ts);
   }
 
-  /* Read the maximum typecheck precedence across the parms of one
-     overload.  Lower = more specific (SWIG convention).  Used to sort
-     free-function overloads in the d.ts so TS overload-resolution
-     picks the most-specific matching declaration. */
-  int stub_overload_precedence(Node *ni) {
-    int max_prec = 0;
-    Parm *pj = Getattr(ni, "wrap:parms");
-    if (!pj)
-      pj = Getattr(ni, "parms");
-    if (pj)
-      Swig_typemap_attach_parms("typecheck", pj, 0);
-    while (pj) {
-      String *prec = Getattr(pj, "tmap:typecheck:precedence");
-      if (prec) {
-        int p = atoi(Char(prec));
-        if (p > max_prec)
-          max_prec = p;
+  /* Snapshot the supplied parameters while named typemaps are in scope.
+     Default-argument dispatch entries rank only their supplied arguments. */
+  void set_dispatch_rank(Hash *entry, Node *source, ParmList *parameters, int arity) {
+    Node *node = NewHash();
+    Setfile(node, Getfile(source));
+    Setline(node, Getline(source));
+    Setattr(node, "name", Getattr(source, "name"));
+    Setattr(node, "decl", Getattr(source, "decl"));
+    Setattr(node, "wrap:name", "wasm_dispatch");
+    Setattr(node, "dispatch_source", Getattr(source, "defaultargs") ? Getattr(source, "defaultargs") : source);
+    String *argument_count = NewStringf("%d", arity);
+    Setattr(node, "dispatch_arity", argument_count);
+    Delete(argument_count);
+    ParmList *parms = 0;
+    Parm *last = 0;
+    for (Parm *p = parameters; p && arity; p = nextSibling(p)) {
+      if (is_in_numinputs0(p))
+        continue;
+      Parm *copy = NewParm(Getattr(p, "type"), Getattr(p, "name"), source);
+      Setattr(copy, "tmap:in:numinputs", "1");
+      Swig_typemap_attach_parms("typecheck", copy, 0);
+      if (last) {
+        set_nextSibling(last, copy);
+        Delete(copy);
+      } else {
+        parms = copy;
       }
-      pj = nextSibling(pj);
+      last = copy;
+      --arity;
     }
-    return max_prec;
+    Setattr(node, "wrap:parms", parms);
+    Setattr(entry, "rank_node", node);
+    Delete(parms);
+    Delete(node);
+  }
+
+  /* Use the common ranker for every callable kind, including subtype
+     precedence and lexicographic multi-argument typecheck precedence. */
+  void rank_dispatch_entries(List *entries) {
+    /* The parser's default-argument copies can duplicate our truncated
+       entries. Keep a single entry before asking the common ranker. */
+    for (int i = 0; i < Len(entries); ++i) {
+      Node *node = Getattr(Getitem(entries, i), "rank_node");
+      for (int j = i + 1; j < Len(entries);) {
+        Node *other = Getattr(Getitem(entries, j), "rank_node");
+        if (Getattr(node, "dispatch_source") == Getattr(other, "dispatch_source") && Equal(Getattr(node, "dispatch_arity"), Getattr(other, "dispatch_arity")))
+          Delitem(entries, j);
+        else
+          ++j;
+      }
+    }
+    if (Len(entries) < 2)
+      return;
+    Node *first = Getattr(Getitem(entries, 0), "rank_node");
+    for (int i = 0; i < Len(entries); ++i) {
+      Node *node = Getattr(Getitem(entries, i), "rank_node");
+      Setattr(node, "sym:overloaded", first);
+      if (i + 1 < Len(entries))
+        Setattr(node, "sym:nextSibling", Getattr(Getitem(entries, i + 1), "rank_node"));
+      Setattr(node, "dispatch_entry", Getitem(entries, i));
+    }
+    List *ranked = Swig_overload_rank(first, true);
+    List *ordered = NewList();
+    for (int i = 0; ranked && i < Len(ranked); ++i)
+      Append(ordered, Getattr(Getitem(ranked, i), "dispatch_entry"));
+    for (int i = 0; i < Len(entries); ++i) {
+      Node *node = Getattr(Getitem(entries, i), "rank_node");
+      Delattr(node, "sym:overloaded");
+      Delattr(node, "sym:nextSibling");
+      Delattr(node, "dispatch_entry");
+    }
+    Clear(entries);
+    for (int i = 0; i < Len(ordered); ++i)
+      Append(entries, Getitem(ordered, i));
+    Delete(ordered);
+    Delete(ranked);
   }
 
   /* Strip SWIG's __SWIG_<N> overload-numbering suffix from a sym:name. */
@@ -1850,36 +1826,81 @@ protected:
           Append(stub_free_fn_order, Copy(bare));
         }
         Hash *entry = NewHash();
-        Setattr(entry, "precedence", NewStringf("%d", stub_overload_precedence(ni)));
+        ParmList *parms = Getattr(ni, "parms");
+        set_dispatch_rank(entry, ni, parms, parm_arity_js(parms));
         Setattr(entry, "body", body);
         Append(bucket, entry);
         Delete(bare);
         Delete(entry);
       } else {
-        stub_write_signature(f_stubs, indent, ni, kind);
-        /* Statics also get an instance-form signature, pending the
-           class-end collision check against real member methods. */
-        if (kind == 2 && class_jsname) {
-          if (!stub_static_instance_pending)
-            stub_static_instance_pending = NewHash();
-          String *key = NewStringf("%s::%s", class_jsname, Getattr(ni, "sym:name"));
-          String *buf = (String *)Getattr(stub_static_instance_pending, key);
-          if (!buf) {
-            buf = NewString("");
-            Setattr(stub_static_instance_pending, key, buf);
-          }
-          stub_write_signature(buf, indent, ni, 1);
-          Delete(key);
+        if (!stub_method_buckets) {
+          stub_method_buckets = NewHash();
+          stub_method_order = NewList();
         }
+        String *bare = stub_bare_jsname(Getattr(ni, "sym:name"));
+        String *key = NewStringf("%s::%d::%s", class_jsname, kind, bare);
+        List *bucket = Getattr(stub_method_buckets, key);
+        if (!bucket) {
+          bucket = NewList();
+          Setattr(stub_method_buckets, key, bucket);
+          Append(stub_method_order, key);
+          Delete(bucket);
+        }
+        Hash *entry = NewHash();
+        ParmList *parms = Getattr(ni, "parms");
+        set_dispatch_rank(entry, ni, parms, parm_arity_js(parms));
+        String *body = NewString("");
+        stub_write_signature(body, indent, ni, kind);
+        Setattr(entry, "body", body);
+        Delete(body);
+        Setattr(entry, "class", class_jsname);
+        if (kind == 2) {
+          String *instance = NewString("");
+          stub_write_signature(instance, indent, ni, 1);
+          Setattr(entry, "instance_body", instance);
+          String *instance_key = NewStringf("%s::%s", class_jsname, bare);
+          Setattr(entry, "instance_key", instance_key);
+          Delete(instance_key);
+          Delete(instance);
+        }
+        Append(bucket, entry);
+        Delete(entry);
+        Delete(key);
+        Delete(bare);
       }
     }
     if (single)
       Delete(single);
   }
 
-  /* Drain stub_free_fn_buckets into f_stubs_module, sorted ascending
-     by precedence within each bucket.  Called from top() right before
-     the d.ts file is closed. */
+  void stub_drain_method_buckets() {
+    for (int i = 0; stub_method_order && i < Len(stub_method_order); ++i) {
+      List *bucket = Getattr(stub_method_buckets, Getitem(stub_method_order, i));
+      if (!Len(bucket) || !Equal(Getattr(Getitem(bucket, 0), "class"), class_jsname))
+        continue;
+      rank_dispatch_entries(bucket);
+      for (int j = 0; j < Len(bucket); ++j) {
+        Hash *entry = Getitem(bucket, j);
+        Printv(f_stubs_class_body, Getattr(entry, "body"), NIL);
+        if (Getattr(entry, "instance_body")) {
+          if (!stub_static_instance_pending)
+            stub_static_instance_pending = NewHash();
+          String *key = Getattr(entry, "instance_key");
+          String *body = Getattr(stub_static_instance_pending, key);
+          if (!body) {
+            body = NewString("");
+            Setattr(stub_static_instance_pending, key, body);
+            Delete(body);
+          }
+          Append(body, Getattr(entry, "instance_body"));
+        }
+      }
+      Clear(bucket);
+    }
+  }
+
+  /* Drain free-function declarations in canonical overload order at
+     module end, after all template instantiations have been visited. */
   void stub_drain_free_fn_buckets() {
     if (!stub_free_fn_buckets || !stub_free_fn_order || !f_stubs_module)
       return;
@@ -1890,28 +1911,11 @@ protected:
       List *bucket = (List *)Getattr(stub_free_fn_buckets, name);
       if (!bucket)
         continue;
-      /* Selection-sort the bucket by ascending precedence (small N). */
-      List *sorted = NewList();
-      while (Len(bucket) > 0) {
-        int min_idx = 0;
-        int min_prec = atoi(Char((String *)Getattr((Hash *)Getitem(bucket, 0), "precedence")));
-        for (int x = 1; x < Len(bucket); ++x) {
-          int p = atoi(Char((String *)Getattr((Hash *)Getitem(bucket, x), "precedence")));
-          if (p < min_prec) {
-            min_prec = p;
-            min_idx = x;
-          }
-        }
-        Hash *picked = (Hash *)Getitem(bucket, min_idx);
-        Append(sorted, picked);
-        Delitem(bucket, min_idx);
+      rank_dispatch_entries(bucket);
+      for (int a = 0; a < Len(bucket); ++a) {
+        Hash *e = Getitem(bucket, a);
+        Printv(f_stubs_module, Getattr(e, "body"), NIL);
       }
-      for (int a = 0; a < Len(sorted); ++a) {
-        Hash *e = (Hash *)Getitem(sorted, a);
-        String *body = (String *)Getattr(e, "body");
-        Printv(f_stubs_module, body, NIL);
-      }
-      Delete(sorted);
     }
   }
 
@@ -1927,7 +1931,7 @@ protected:
     Parm *out_fake = 0;
     String *po = 0;
     if (t) {
-      out_fake = NewParm(t, NewString("result"), 0);
+      out_fake = NewParm(t, Getattr(n, "name"), 0);
       Setattr(out_fake, "lname", "result");
       Swig_typemap_attach_parms("out", out_fake, 0);
       po = Getattr(out_fake, "tmap:out:tsstub_out");
@@ -1936,15 +1940,13 @@ protected:
     if (po && Len(po) > 0) {
       raw = Copy(po);
     } else if (t) {
-      String *sname = SwigType_str(t, 0);
-      raw = cpp_to_ts(sname);
-      Delete(sname);
+      raw = type_to_ts(t, true);
     } else {
       raw = NewString("any");
     }
     ts = ts_apply_aliases(raw, true);
     Delete(raw);
-    Printv(f_stubs, indent, symname, ": ", ts, ";\n", NIL);
+    Printv(f_stubs, indent, GetFlag(n, "feature:immutable") || SwigType_isconst(t) ? "readonly " : "", symname, ": ", ts, ";\n", NIL);
     if (out_fake)
       Delete(out_fake);
     Delete(ts);
@@ -2037,7 +2039,7 @@ protected:
        - rt T     + >=1 argouts -> "void*"  (packed)
      Callers (memberfunctionHandler etc.) use this to emit the
      EMSCRIPTEN_KEEPALIVE wrapper signature. */
-  String *effective_return_ctype(SwigType *rt, ParmList *p) {
+  String *effective_return_ctype(SwigType *rt, ParmList *p, Node *context = 0) {
     int n_argouts = count_argouts(p);
     if (n_argouts == 0) {
       if (!rt)
@@ -2046,13 +2048,75 @@ protected:
       if (Cmp(ts, "void") == 0)
         return ts;
       Delete(ts);
-      return cpp_return_type(rt);
+      return cpp_return_type(rt, context);
     }
     return NewString("void*");
   }
 
-  String *cpp_call_body(Node *n, ParmList *p, SwigType *rt, const String *call_expr) {
-    String *out = NewString("");
+  /* Use the common extension helper generator while retaining the wasm call ABI. */
+  String *extension_call(Node *n, SwigType *rt, const String *args, bool receiver, const String *fallback) {
+    if (!GetFlag(n, "feature:extend") || (Getattr(n, "template") && !GetFlag(n, "isextendmember")))
+      return Copy(fallback);
+    Node *source = Getattr(n, "defaultargs");
+    if (!source)
+      source = n;
+    String *helper = Getattr(source, "wasm:extend:helper");
+    if (!helper) {
+      String *member;
+      if (Equal(nodeType(n), "constructor"))
+        member = Swig_name_construct(0, class_cname);
+      else if (Equal(nodeType(n), "destructor"))
+        member = Swig_name_destroy(0, class_cname);
+      else
+        member = Swig_name_member(0, class_cname, Getattr(n, "name"));
+      helper = Swig_name_mangle_string(member);
+      Delete(member);
+      String *code = Getattr(source, "code");
+      if (code && Getattr(source, "sym:overloaded"))
+        Append(helper, Getattr(source, "sym:overname"));
+      Setattr(source, "wasm:extend:helper", helper);
+      if (code) {
+        ParmList *parameters = CopyParmList(Getattr(source, "parms"));
+        if (receiver) {
+          SwigType *type = Copy(class_cname);
+          String *qualifier = Getattr(n, "qualifier");
+          if (qualifier)
+            SwigType_push(type, qualifier);
+          SwigType_add_pointer(type);
+          Parm *self = NewParm(type, "self", n);
+          set_nextSibling(self, parameters);
+          Delete(parameters);
+          parameters = self;
+          Delete(type);
+        }
+        Swig_add_extension_code(source, helper, parameters, rt, code, CPlusPlus, "self");
+        Printv(Swig_filebyname("header"), Getattr(source, "wrap:code"), NIL);
+        Setattr(source, "wrap:code:done", Swig_filebyname("header"));
+        Delete(parameters);
+      }
+      Delete(helper);
+      helper = Getattr(source, "wasm:extend:helper");
+    }
+    return NewStringf("%s(%s%s%s)", helper, receiver ? "self" : "", receiver && Len(args) ? ", " : "", args);
+  }
+
+  String *owned_input_handles(ParmList *parms) {
+    Swig_typemap_attach_parms("ctype", parms, 0);
+    Swig_typemap_attach_parms("in", parms, 0);
+    String *guards = NewString("");
+    int index = 0;
+    for (Parm *p = parms; p; p = nextSibling(p)) {
+      if (is_in_numinputs0(p))
+        continue;
+      if (Equal(Getattr(p, "tmap:ctype"), "EM_VAL"))
+        Printf(guards, "  emscripten::val _input%d = obj%d ? emscripten::val::take_ownership(obj%d) : emscripten::val::undefined();\n", index, index, index);
+      ++index;
+    }
+    return guards;
+  }
+
+  String *cpp_call_body(Node *n, ParmList *p, SwigType *rt, const String *call_expr, bool own_inputs = true) {
+    String *out = own_inputs ? owned_input_handles(p) : NewString("");
 
     Printf(out, "  {\n");
 
@@ -2076,12 +2140,9 @@ protected:
     Delete(ts);
     if (is_void_rt && n_argouts == 0) {
       Printf(out, "  %s;\n", call_expr);
-      String *frees = parm_freeargs(p);
-      Printv(out, frees, NIL);
-      Delete(frees);
       Printf(out, "  return;\n");
       Printf(out, "  }\n"); /* close the body-wrap block */
-      emit_fail_label(out, rt, p);
+      emit_fail_label(out, rt, p, n);
       return out;
     }
 
@@ -2092,9 +2153,6 @@ protected:
       String *argouts_body = emit_argout_bodies(p);
       Printv(out, argouts_body, NIL);
       Delete(argouts_body);
-      String *frees = parm_freeargs(p);
-      Printv(out, frees, NIL);
-      Delete(frees);
       /* Pack: single output returned directly; multiple packed into a
          heap void** with caller responsible for freeing each + the
          array (JS-side proxy handles cleanup). */
@@ -2106,7 +2164,7 @@ protected:
         Printf(out, "  return (void*)_packed;\n");
       }
       Printf(out, "  }\n"); /* close the body-wrap block */
-      emit_fail_label(out, rt, p);
+      emit_fail_label(out, rt, p, n);
       return out;
     }
 
@@ -2144,11 +2202,11 @@ protected:
 
     /* out typemap: $1 substituted to "result" by attach (lname=result).
        $result substituted manually to "_outv". */
-    Parm *fake = NewParm(rt, NewString("result"), 0);
+    Parm *fake = NewParm(rt, Getattr(n, "name"), 0);
     Setattr(fake, "lname", "result");
     Swig_typemap_attach_parms("out", fake, 0);
     String *tm = Getattr(fake, "tmap:out");
-    String *ctype = cpp_return_type(rt);
+    String *ctype = cpp_return_type(rt, n);
     Printf(out, "  %s _outv;\n", ctype);
     if (tm) {
       String *body = Copy(tm);
@@ -2199,10 +2257,6 @@ protected:
       Delete(argouts_body);
     }
 
-    String *frees = parm_freeargs(p);
-    Printv(out, frees, NIL);
-    Delete(frees);
-
     /* Return packing:
          - 0 argouts: just _outv.
          - argouts present: pack (_outv, _argouts...) into heap void**.
@@ -2221,7 +2275,7 @@ protected:
        any in-typemap that fails conversion.  Returns a zero sentinel
        (null EM_VAL / NULL pointer / 0 numeric).  JS-side dispatcher
        checks '_swig_last_error_code()' after the call and throws. */
-    emit_fail_label(out, rt, p);
+    emit_fail_label(out, rt, p, n);
     return out;
   }
 
@@ -2231,8 +2285,8 @@ protected:
      them all uniformly).  The label is emitted unconditionally; wrappers
      with no SWIG_fail-using typemaps will warn "unused label" but compile
      cleanly. */
-  void emit_fail_label(String *out, SwigType *rt, ParmList *p) {
-    String *ret_t = effective_return_ctype(rt, p);
+  void emit_fail_label(String *out, SwigType *rt, ParmList *p, Node *n) {
+    String *ret_t = effective_return_ctype(rt, p, n);
     bool is_void = (Cmp(ret_t, "void") == 0);
     Printf(out, "fail:\n");
     if (is_void) {
@@ -2291,6 +2345,7 @@ int WASM_JS::classDirectorConstructor(Node *n) {
     if (ParmList_len(superparms) == 0) {
       Printf(f_cpp_wrappers,
              "EMSCRIPTEN_KEEPALIVE void* swig_new_SwigDirector_%s(EM_VAL js_self) {\n"
+             "  emscripten::val _self_owner = emscripten::val::take_ownership(js_self);\n"
              "  return static_cast<void*>(new %s(js_self));\n"
              "}\n",
              supername,
@@ -2328,6 +2383,7 @@ int WASM_JS::classDirectorDefaultConstructor(Node *n) {
   String *export_name = NewStringf("_swig_new_SwigDirector_%s", classname);
   Printf(f_cpp_wrappers,
          "EMSCRIPTEN_KEEPALIVE void* swig_new_SwigDirector_%s(EM_VAL js_self) {\n"
+         "  emscripten::val _self_owner = emscripten::val::take_ownership(js_self);\n"
          "  return static_cast<void*>(new SwigDirector_%s(js_self));\n"
          "}\n",
          classname,
@@ -2639,6 +2695,19 @@ int WASM_JS::top(Node *n) {
 
   f_cpp_runtime = NewString("");
   f_cpp_header = NewString("");
+  Printf(f_cpp_header,
+         "#include <utility>\n"
+         "namespace swig_wasmjs {\n"
+         "template <class F> class cleanup_guard {\n"
+         "  F action; bool active;\n"
+         "public:\n"
+         "  explicit cleanup_guard(F f) : action(std::move(f)), active(true) {}\n"
+         "  cleanup_guard(cleanup_guard&& other) : action(std::move(other.action)), active(other.active) { other.active = false; }\n"
+         "  cleanup_guard(const cleanup_guard&) = delete;\n"
+         "  ~cleanup_guard() { if (active) action(); }\n"
+         "};\n"
+         "template <class F> cleanup_guard<F> make_cleanup(F f) { return cleanup_guard<F>(std::move(f)); }\n"
+         "}\n");
   f_cpp_wrappers = NewString("");
   f_cpp_init = NewString("");
   f_directors = NewString("");
@@ -2730,6 +2799,7 @@ int WASM_JS::top(Node *n) {
          "    return v;\n"
          "  }\n"
          "  function __vec_to_arr(vec) {\n"
+         "    if (Array.isArray(vec)) return vec;\n"
          "    if (!vec) return [];\n"
          "    const n = Number(vec.size());\n"
          "    const out = new Array(n);\n"
@@ -2778,8 +2848,7 @@ int WASM_JS::top(Node *n) {
          "      const callable = function (...args) { return makeInvoke(callable)(...args); };\n"
          "      Object.setPrototypeOf(callable, Orig.prototype);\n"
          "      callable._ptr = inst._ptr;\n"
-         "      fr.unregister(inst);\n"
-         "      fr.register(callable, inst._ptr, callable);\n"
+         "      if (fr.unregister(inst)) fr.register(callable, inst._ptr, callable);\n"
          "      inst._ptr = 0;\n"
          "      for (const k of collisions)\n"
          "        Object.defineProperty(callable, k,\n"
@@ -2894,10 +2963,16 @@ int WASM_JS::top(Node *n) {
     while (it.key) {
       String *jsn = (String *)it.key;
       List *overloads = (List *)it.item;
+      rank_dispatch_entries(overloads);
       int nover = Len(overloads);
       if (nover == 1) {
         Hash *e = (Hash *)Getitem(overloads, 0);
-        Printf(f_js_module, "    %s(%s) {\n%s    },\n", jsn, (String *)Getattr(e, "jsargs"), (String *)Getattr(e, "body"));
+        Printf(f_js_module,
+               "    %s(...args) {\n      if (args.length !== %s) throw new TypeError('Wrong argument count');\n      const [%s] = args;\n%s    },\n",
+               jsn,
+               Getattr(e, "arity"),
+               (String *)Getattr(e, "jsargs"),
+               (String *)Getattr(e, "body"));
       } else {
         /* Multi-overload free-function dispatcher.  Preferred path:
            use the per-entry 'type_checks' (full per-arg discrim) +
@@ -3187,6 +3262,20 @@ int WASM_JS::classHandler(Node *n) {
   String *cname = SwigType_str(t, 0);
   class_cname = cname;
 
+  /* Remember classes even when they occur only as container element types. */
+  SwigType *pointer_type = Copy(t);
+  SwigType_add_pointer(pointer_type);
+  SwigType_remember(pointer_type);
+  String *descriptor = SwigType_manglestr(pointer_type);
+  Printf(f_cpp_header,
+         "namespace swig_wasmjs { template <> struct type_descriptor< %s > {\n"
+         "  static swig_type_info *get() { return SWIG_TypeQuery(\"%s\"); }\n"
+         "}; }\n",
+         cname,
+         descriptor);
+  Delete(descriptor);
+  Delete(pointer_type);
+
   if (!cpp_to_js_class)
     cpp_to_js_class = NewHash();
   Setattr(cpp_to_js_class, cname, class_jsname);
@@ -3231,9 +3320,12 @@ int WASM_JS::classHandler(Node *n) {
   Language::classHandler(n);
 
   if (stubs) {
+    stub_drain_method_buckets();
     /* Match the runtime's first public base. Merge instance members from other bases
        through an interface, since TypeScript classes only support one base class. */
     String *base_clause_ts = NewString("");
+    String *static_bases_ts = NewString("");
+    String *seen_static_keys = NewStringf("keyof typeof %s__class", class_jsname);
     String *iface_clause_ts = 0;
     List *bases = Getattr(n, "bases");
     if (bases && Len(bases) > 0) {
@@ -3258,6 +3350,8 @@ int WASM_JS::classHandler(Node *n) {
           String *bn = Getattr(b, "sym:name");
           if (!bn)
             continue;
+          Printf(static_bases_ts, " & Pick<typeof %s, Exclude<keyof typeof %s, %s>>", bn, bn, seen_static_keys);
+          Printf(seen_static_keys, " | keyof typeof %s", bn);
           if (!first)
             Printv(iface_clause_ts, ", ", NIL);
           Printv(iface_clause_ts, bn, NIL);
@@ -3296,9 +3390,21 @@ int WASM_JS::classHandler(Node *n) {
       Delete(iface_clause_ts);
     }
     Printv(saved_stubs, "export type ", class_jsname, " = ", class_jsname, "__class;\n", NIL);
-    Printv(saved_stubs, "export const ", class_jsname, ": typeof ", class_jsname, "__class", " & { (...args: any[]): ", class_jsname, "__class };\n", NIL);
+    Printv(saved_stubs,
+           "export const ",
+           class_jsname,
+           ": typeof ",
+           class_jsname,
+           "__class",
+           static_bases_ts,
+           " & { (...args: any[]): ",
+           class_jsname,
+           "__class };\n",
+           NIL);
     Printv(saved_stubs, "\n", NIL);
     Delete(base_clause_ts);
+    Delete(static_bases_ts);
+    Delete(seen_static_keys);
     Delete(f_stubs_class_body);
     f_stubs_class_body = 0;
     f_stubs = saved_stubs;
@@ -3341,6 +3447,7 @@ int WASM_JS::classHandler(Node *n) {
      C export emitted; the dispatcher's per-arity branch tries each
      in declaration order until one matches the arg shape. */
   if (Len(ctor_overloads) > 0) {
+    rank_dispatch_entries(ctor_overloads);
     String *cmangle = mangle(cname);
     String *ctor_js = NewString("");
     Printf(ctor_js, "    constructor(...args) {\n");
@@ -3408,73 +3515,20 @@ int WASM_JS::classHandler(Node *n) {
       String *arity_key = ait.key;
       List *grp = (List *)ait.item;
       Printf(ctor_js, "        case %s: {\n", arity_key);
-      /* Emit EVERY overload of this arity, each gated by its own
-         discriminator (class-type probes for class params, ANDed with
-         primitive typeof checks).  A single fully-unconditional overload
-         (no class and no primitive params, e.g. the 0-arg ctor) is the
-         bare fallback, emitted last.  This replaces the old "one fallback
-         per arity" scheme that silently dropped same-arity primitive
-         overloads (e.g. Slice(start,stop) lost to Slice(i,bool)). */
-      Hash *bare = 0;
-      for (int i = 0; i < Len(grp); ++i) {
-        Hash *e = (Hash *)Getitem(grp, i);
-        String *idxs = (String *)Getattr(e, "dispatch_idxs");
-        String *clss = (String *)Getattr(e, "dispatch_clss");
-        String *prim = (String *)Getattr(e, "prim_checks");
-        String *sw = (String *)Getattr(e, "swig_name");
-        String *call_args = (String *)Getattr(e, "call_args_js");
-        String *str_prologue = (String *)Getattr(e, "str_prologue");
-        String *str_free = (String *)Getattr(e, "str_free");
-        String *cond = NewString("");
-        if (idxs && Len(idxs) > 0) {
-          List *idx_list = Split(idxs, ' ', -1);
-          List *cls_list = Split(clss, ' ', -1);
-          for (int k = 0; k < Len(idx_list); ++k) {
-            String *idx = (String *)Getitem(idx_list, k);
-            String *cls = (String *)Getitem(cls_list, k);
-            if (Len(cond) > 0)
-              Printv(cond, " && ", NIL);
-            register_probe(cls);
-            Printf(cond, "M._swig_can_%s(__unwrap(args[%s]))", cls, idx);
-          }
-          Delete(idx_list);
-          Delete(cls_list);
+      Hash *fallback = 0;
+      for (int index = 0; index < Len(grp); ++index) {
+        Hash *entry = Getitem(grp, index);
+        String *checks = Getattr(entry, "type_checks");
+        if (checks && Len(checks)) {
+          Printf(ctor_js, "          if (%s) { __ptr = (() => {\n%s          })(); break; }\n", checks, Getattr(entry, "js_body"));
+        } else if (!fallback) {
+          fallback = entry;
         }
-        if (prim && Len(prim) > 0) {
-          if (Len(cond) > 0)
-            Printv(cond, " && ", NIL);
-          Printv(cond, prim, NIL);
-        }
-        if (Len(cond) > 0) {
-          if (str_prologue && Len(str_prologue) > 0) {
-            Printf(ctor_js,
-                   "          if (%s) {\n%s            __ptr = __chk(M._%s(%s));\n%s            break;\n          }\n",
-                   Char(cond),
-                   str_prologue,
-                   sw,
-                   call_args ? Char(call_args) : "",
-                   str_free);
-          } else {
-            Printf(ctor_js, "          if (%s) { __ptr = __chk(M._%s(%s)); break; }\n", Char(cond), sw, call_args ? Char(call_args) : "");
-          }
-        } else if (!bare) {
-          bare = e; /* fully unconditional; emit once, after the guarded ones */
-        }
-        Delete(cond);
       }
-      if (bare) {
-        String *sw = (String *)Getattr(bare, "swig_name");
-        String *call_args = (String *)Getattr(bare, "call_args_js");
-        String *str_prologue = (String *)Getattr(bare, "str_prologue");
-        String *str_free = (String *)Getattr(bare, "str_free");
-        if (str_prologue && Len(str_prologue) > 0) {
-          Printf(ctor_js, "%s          __ptr = __chk(M._%s(%s));\n%s          break;\n", str_prologue, sw, call_args ? Char(call_args) : "", str_free);
-        } else {
-          Printf(ctor_js, "          __ptr = __chk(M._%s(%s)); break;\n", sw, call_args ? Char(call_args) : "");
-        }
-      } else {
+      if (fallback)
+        Printf(ctor_js, "          __ptr = (() => {\n%s          })(); break;\n", Getattr(fallback, "js_body"));
+      else
         Printf(ctor_js, "          throw new TypeError(`%s: arg-type mismatch at length %s`);\n", class_jsname, arity_key);
-      }
       Printf(ctor_js, "        }\n");
       ait = Next(ait);
     }
@@ -3516,13 +3570,19 @@ int WASM_JS::classHandler(Node *n) {
         size_t plen = p - ks;
         if (plen == (size_t)Len(class_jsname) && strncmp(ks, Char(class_jsname), plen) == 0) {
           List *lst = (List *)mit.item;
+          rank_dispatch_entries(lst);
           const char *jsname = p + 2;
           int nover = Len(lst);
           if (nover == 1) {
             Hash *e = (Hash *)Getitem(lst, 0);
             String *ja = (String *)Getattr(e, "jsargs");
             String *bd = (String *)Getattr(e, "js_body");
-            Printf(member_js, "    %s(%s) {\n%s    }\n", jsname, ja ? Char(ja) : "", bd ? Char(bd) : "");
+            Printf(member_js,
+                   "    %s(...args) {\n      if (args.length !== %s) throw new TypeError('Wrong argument count');\n      const [%s] = args;\n%s    }\n",
+                   jsname,
+                   Getattr(e, "arity"),
+                   ja ? Char(ja) : "",
+                   bd ? Char(bd) : "");
           } else {
             /* Multi-overload: same type-discriminating dispatch as the
                static-method block below.  Without it, SerializerBase.pack
@@ -3633,13 +3693,19 @@ int WASM_JS::classHandler(Node *n) {
         plen = p - ks;
         if (plen == (size_t)Len(class_jsname) && strncmp(ks, Char(class_jsname), plen) == 0) {
           List *lst = (List *)sit.item;
+          rank_dispatch_entries(lst);
           const char *jsname = p + 2;
           int nover = Len(lst);
           if (nover == 1) {
             Hash *e = (Hash *)Getitem(lst, 0);
             String *ja = (String *)Getattr(e, "jsargs");
             String *bd = (String *)Getattr(e, "js_body");
-            Printf(static_js, "    static %s(%s) {\n%s    }\n", jsname, ja ? Char(ja) : "", bd ? Char(bd) : "");
+            Printf(static_js,
+                   "    static %s(...args) {\n      if (args.length !== %s) throw new TypeError('Wrong argument count');\n      const [%s] = args;\n%s    }\n",
+                   jsname,
+                   Getattr(e, "arity"),
+                   ja ? Char(ja) : "",
+                   bd ? Char(bd) : "");
           } else {
             /* Multi-arity: switch on args.length, then type-discriminate
                within each arity when multiple overloads share it.
@@ -3873,8 +3939,6 @@ int WASM_JS::constructorHandler(Node *n) {
   if (!class_cname)
     return Language::constructorHandler(n);
   ParmList *p = Getattr(n, "parms");
-  int arity = parm_arity(p);
-
   bool skip = false;
 
   if (!skip) {
@@ -3884,16 +3948,24 @@ int WASM_JS::constructorHandler(Node *n) {
     String *decls = parm_decls(p);
     String *args = parm_args(p);
     String *prologue = parm_prologue(p);
-    String *frees = parm_freeargs(p);
+    String *frees = NewString("");
+    String *guards = owned_input_handles(p);
+    SwigType *pointer_type = Copy(class_cname);
+    SwigType_add_pointer(pointer_type);
+    String *native_call = NewStringf("new %s(%s)", class_cname, args);
+    String *call = extension_call(n, pointer_type, args, false, native_call);
+    Delete(native_call);
+    Delete(pointer_type);
 
     /* Body wrapped in '{ }' so prologue locals are out of scope at the
        'fail:' label (otherwise C++ rejects the goto with "bypasses
        initialization").  Same shape as cpp_call_body. */
     Printf(class_cpp_section,
            "EMSCRIPTEN_KEEPALIVE %s* %s(%s) {\n"
+           "%s"
            "  {\n"
            "%s"
-           "    %s* _outv = new %s(%s);\n"
+           "    %s* _outv = %s;\n"
            "%s"
            "    return _outv;\n"
            "  }\n"
@@ -3903,390 +3975,51 @@ int WASM_JS::constructorHandler(Node *n) {
            class_cname,
            swig_name,
            decls,
+           guards,
            prologue,
            class_cname,
-           class_cname,
-           args,
+           call,
            frees);
+    Delete(call);
+    Delete(guards);
     register_export(Char(swig_name));
 
-    /* Track ALL class-typed parm positions for dispatch (not just the
-       first).  Each position contributes an OR-clause to the dispatcher
-       so empty-array args at one position fall back to a non-empty
-       array at another position.  E.g. for
-       'Function(string, vec<MX>, vec<MX>, Dict)', passing
-       '(name, [], [r], null)' dispatches via args[2] when args[1] is
-       empty.  Stored as parallel space-separated lists of indices and
-       JS class names. */
-    Hash *entry = NewHash();
-    char arity_str[16];
-    snprintf(arity_str, sizeof(arity_str), "%d", arity);
-    Setattr(entry, "arity", NewString(arity_str));
-    Setattr(entry, "swig_name", Copy(swig_name));
-    int parm_idx = 0;
-    String *dispatch_idxs = NewString("");
-    String *dispatch_clss = NewString("");
-    /* Per-arg JS typeof-checks for PRIMITIVE parms.  Prevents the
-       arity-fallback overload from accepting non-numeric args (e.g.
-       'MX("hello")' silently routing to 'MX(double)' -> NaN).  Empty
-       string when no primitive parms (or unknown types). */
-    String *prim_checks = NewString("");
-    for (Parm *q = p; q; q = nextSibling(q), ++parm_idx) {
-      if (is_in_numinputs0(q))
-        continue;
-      SwigType *t = Getattr(q, "type");
-      if (t) {
-        /* Canonical helper handles cv/ref/ptr stripping, typedef and
-           namestr forms, plus last-:: namespace fallback. */
-        String *hit = lookup_js_class(t);
-        if (hit && Len(hit) > 0) {
-          if (Len(dispatch_idxs) > 0) {
-            Printv(dispatch_idxs, " ", NIL);
-            Printv(dispatch_clss, " ", NIL);
-          }
-          Printf(dispatch_idxs, "%d", parm_idx);
-          Printv(dispatch_clss, hit, NIL);
-        } else {
-          /* Primitive parm: emit a typeof check for the fallback case.
-             Strip cv/ref/ptr and resolve typedefs to identify the
-             underlying primitive. */
-          SwigType *ts = Copy(t);
-          SwigType *tres = SwigType_typedef_resolve_all(ts);
-          String *tstr = SwigType_str(tres ? tres : ts, 0);
-          const char *cs = Char(tstr);
-          const char *jscheck = 0;
-          if (strstr(cs, "double") || strstr(cs, "float")) {
-            jscheck = "(typeof args[%d] === 'number' || typeof args[%d] === 'bigint')";
-          } else if (strstr(cs, "long long")) {
-            jscheck = "(typeof args[%d] === 'number' || typeof args[%d] === 'bigint')";
-          } else if (strstr(cs, "bool")) {
-            jscheck = "(typeof args[%d] === 'boolean')";
-          } else {
-            /* Discriminate true string parms from compound types
-               containing "string" or "char" in their name (e.g.
-               std::map<std::string, T>, std::vector<char>) via the
-               ctype typemap -- only std::string / const std::string&
-               have ctype 'const char*'. */
-            String *ctype_p = Getattr(q, "tmap:ctype");
-            if (ctype_p && (Strstr(ctype_p, "char*") || Strstr(ctype_p, "char *"))) {
-              jscheck = "(typeof args[%d] === 'string')";
-            }
-          }
-          if (jscheck) {
-            if (Len(prim_checks) > 0)
-              Printv(prim_checks, " && ", NIL);
-            /* The format string has %d twice -- printf with same arg
-               value substituted for both. */
-            char chk[256];
-            snprintf(chk, sizeof(chk), jscheck, parm_idx, parm_idx);
-            Printv(prim_checks, chk, NIL);
-          }
-          if (tres)
-            Delete(tres);
-          Delete(tstr);
-          Delete(ts);
-        }
-      }
-    }
-    if (Len(dispatch_idxs) > 0) {
-      Setattr(entry, "dispatch_idxs", dispatch_idxs);
-      Setattr(entry, "dispatch_clss", dispatch_clss);
-    } else {
-      Delete(dispatch_idxs);
-      Delete(dispatch_clss);
-    }
-    if (Len(prim_checks) > 0)
-      Setattr(entry, "prim_checks", prim_checks);
-    else
-      Delete(prim_checks);
-    /* Build per-arg conversion list so the ctor dispatcher can emit
-       proper wasm-call arguments instead of blind '__unwrap_args(...)'.
-       For each input parm: vector-typed -> '__unwrap(__arr_to_vec(args[i], V))',
-       class -> '__unwrap(args[i])', primitive -> 'args[i]'.
-       String parm ('const char*' / 'std::string' / 'const std::string&'):
-       wasm export expects a pointer to a UTF-8 buffer in wasm memory --
-       passing a raw JS string makes the C++ side read engine-internal
-       memory ("emsc..." garbage).  Build a malloc + stringToUTF8 +
-       free dance for each string parm.  The dispatcher (in the
-       overload-emission block below) prepends the prologue / appends
-       the free per case. */
-    {
-      String *call_args_js = NewString("");
-      String *str_prologue = NewString("");
-      String *str_free = NewString("");
-      int pi = 0;
-      for (Parm *q = p; q; q = nextSibling(q), ++pi) {
-        if (is_in_numinputs0(q))
+    int maximum = parm_arity_js(p);
+    int first_default = first_default_arity(p);
+    for (int count = first_default < 0 ? maximum : first_default; count <= maximum; ++count) {
+      Hash *entry = NewHash();
+      set_dispatch_rank(entry, n, p, count);
+      String *arity = NewStringf("%d", count);
+      String *checks = NewString("");
+      String *names = NewString("");
+      int index = 0;
+      for (Parm *parameter = p; parameter && index < count; parameter = nextSibling(parameter)) {
+        if (is_in_numinputs0(parameter))
           continue;
-        if (Len(call_args_js) > 0)
-          Printv(call_args_js, ", ", NIL);
-        SwigType *t = Getattr(q, "type");
-        if (String *vec_cls = vector_class_name(t)) {
-          Printf(call_args_js, "__unwrap(__arr_to_vec(args[%d], %s))", pi, Char(vec_cls));
-        } else if (is_registered_class_type(t) || Equal(Getattr(q, "tmap:ctype"), "EM_VAL")) {
-          Printf(call_args_js, "__unwrap(args[%d])", pi);
-        } else {
-          /* Detect string-typed parm via the ctype typemap, which is
-             'const char*' for std::string / const std::string& only
-             (wasm_js.swg).  Compound types like std::map<std::string,
-             T> have ctype EM_VAL, so they don't match here.  We do
-             NOT fall back to substring matching on the typename --
-             "std::map<std::string, T>" contains "string" but is not
-             a string parm. */
-          bool is_string = false;
-          String *ctype = Getattr(q, "tmap:ctype");
-          if (ctype && (Strstr(ctype, "char*") || Strstr(ctype, "char *"))) {
-            is_string = true;
-          }
-          if (is_string) {
-            Printf(call_args_js, "__ps%d", pi);
-            Printf(str_prologue,
-                   "            const __nps%d = M.lengthBytesUTF8(args[%d]);\n"
-                   "            const __ps%d  = M._malloc(__nps%d + 1);\n"
-                   "            M.stringToUTF8(args[%d], __ps%d, __nps%d + 1);\n",
-                   pi,
-                   pi,
-                   pi,
-                   pi,
-                   pi,
-                   pi,
-                   pi);
-            Printf(str_free, "            M._free(__ps%d);\n", pi);
-          } else {
-
-            SwigType *tres = SwigType_typedef_resolve_all(Copy(t));
-            SwigType *eff = tres ? tres : t;
-            SwigType *bare = SwigType_ltype(Copy(eff));
-            if (bare && SwigType_isreference(bare))
-              SwigType_del_reference(bare);
-            int tk = SwigType_type(bare ? bare : eff);
-            if (tk == T_LONGLONG || tk == T_ULONGLONG)
-              Printf(call_args_js, "BigInt(args[%d])", pi);
-            else
-              Printf(call_args_js, "args[%d]", pi);
-            if (bare)
-              Delete(bare);
-            if (tres)
-              Delete(tres);
-          }
+        String *check = build_arg_check(parameter, index);
+        if (check && Len(check)) {
+          if (Len(checks))
+            Append(checks, " && ");
+          Append(checks, check);
         }
+        Delete(check);
+        Printf(names, "%sa%d", index ? ", " : "", index);
+        ++index;
       }
-      Setattr(entry, "call_args_js", call_args_js);
-      if (Len(str_prologue) > 0) {
-        Setattr(entry, "str_prologue", str_prologue);
-        Setattr(entry, "str_free", str_free);
-      } else {
-        Delete(str_prologue);
-        Delete(str_free);
-      }
-      Delete(call_args_js);
-    }
-    if (!ctor_overloads)
-      ctor_overloads = NewList();
-    Append(ctor_overloads, entry);
-
-    int max_js_arity = parm_arity_js(p);
-    int first_def = first_default_arity(p);
-    /* Re-read dispatch_idxs/clss from the entry (the source-side
-       locals may have been freed by the Setattr-or-Delete branch). */
-    String *orig_idxs = (String *)Getattr(entry, "dispatch_idxs");
-    String *orig_clss = (String *)Getattr(entry, "dispatch_clss");
-    if (first_def >= 0 && first_def < max_js_arity) {
-      for (int trunc = first_def; trunc < max_js_arity; ++trunc) {
-        Hash *tentry = NewHash();
-        char tar[16];
-        snprintf(tar, sizeof(tar), "%d", trunc);
-        Setattr(tentry, "arity", NewString(tar));
-        Setattr(tentry, "swig_name", Copy(swig_name));
-        /* Class-typed parm dispatch checks: only apply to indices
-           below 'trunc' (the missing ones are filled by defaults so
-           probing them is moot).  Build the filtered idxs/clss
-           strings. */
-        String *tidxs = NewString("");
-        String *tclss = NewString("");
-        if (orig_idxs && orig_clss) {
-          List *idx_list = Split(orig_idxs, ' ', -1);
-          List *cls_list = Split(orig_clss, ' ', -1);
-          for (int k = 0; k < Len(idx_list); ++k) {
-            int idx_n = atoi(Char((String *)Getitem(idx_list, k)));
-            if (idx_n < trunc) {
-              if (Len(tidxs) > 0) {
-                Printv(tidxs, " ", NIL);
-                Printv(tclss, " ", NIL);
-              }
-              Printf(tidxs, "%d", idx_n);
-              Printv(tclss, (String *)Getitem(cls_list, k), NIL);
-            }
-          }
-          Delete(idx_list);
-          Delete(cls_list);
-        }
-        if (Len(tidxs) > 0) {
-          Setattr(tentry, "dispatch_idxs", tidxs);
-          Setattr(tentry, "dispatch_clss", tclss);
-        } else {
-          Delete(tidxs);
-          Delete(tclss);
-        }
-        /* Build a truncated call_args_js: real args[0..trunc-1] for
-           the present positions, then literal defaults for the rest. */
-        String *t_call_args = NewString("");
-        String *t_str_prologue = NewString("");
-        String *t_str_free = NewString("");
-        String *t_prim = NewString(""); /* typeof discriminators for the present primitive args */
-        int pi = 0;
-        for (Parm *q2 = p; q2; q2 = nextSibling(q2)) {
-          if (is_in_numinputs0(q2))
-            continue;
-          if (Len(t_call_args) > 0)
-            Printv(t_call_args, ", ", NIL);
-          if (pi < trunc) {
-            SwigType *t2 = Getattr(q2, "type");
-            if (String *vec_cls = vector_class_name(t2)) {
-              Printf(t_call_args, "__unwrap(__arr_to_vec(args[%d], %s))", pi, Char(vec_cls));
-            } else if (is_registered_class_type(t2) || Equal(Getattr(q2, "tmap:ctype"), "EM_VAL")) {
-              Printf(t_call_args, "__unwrap(args[%d])", pi);
-            } else {
-              /* Primitive / string present arg: emit the call value, a
-                 typeof discriminator (so same-arity overloads differing
-                 only in primitive types are told apart), and BigInt-wrap
-                 (unsigned) long long for the i64 ABI (mirrors the
-                 full-arity branch). */
-              SwigType *ts2 = Copy(t2);
-              SwigType *tr2 = SwigType_typedef_resolve_all(ts2);
-              String *tstr2 = SwigType_str(tr2 ? tr2 : ts2, 0);
-              const char *cs2 = Char(tstr2);
-              String *ctype2 = Getattr(q2, "tmap:ctype");
-              bool is_string = ctype2 && (Strstr(ctype2, "char*") || Strstr(ctype2, "char *"));
-              if (Len(t_prim) > 0)
-                Printv(t_prim, " && ", NIL);
-              if (is_string) {
-                Printf(t_call_args, "__ps%d", pi);
-                Printf(t_str_prologue,
-                       "            const __nps%d = M.lengthBytesUTF8(args[%d]);\n"
-                       "            const __ps%d  = M._malloc(__nps%d + 1);\n"
-                       "            M.stringToUTF8(args[%d], __ps%d, __nps%d + 1);\n",
-                       pi,
-                       pi,
-                       pi,
-                       pi,
-                       pi,
-                       pi,
-                       pi);
-                Printf(t_str_free, "            M._free(__ps%d);\n", pi);
-                Printf(t_prim, "(typeof args[%d] === 'string')", pi);
-              } else if (strstr(cs2, "bool")) {
-                Printf(t_call_args, "args[%d]", pi);
-                Printf(t_prim, "(typeof args[%d] === 'boolean')", pi);
-              } else {
-                SwigType *bare2 = SwigType_ltype(Copy(tr2 ? tr2 : ts2));
-                int tk2 = SwigType_type(bare2);
-                if (tk2 == T_LONGLONG || tk2 == T_ULONGLONG)
-                  Printf(t_call_args, "BigInt(args[%d])", pi);
-                else
-                  Printf(t_call_args, "args[%d]", pi);
-                Printf(t_prim, "(typeof args[%d] === 'number' || typeof args[%d] === 'bigint')", pi, pi);
-                if (bare2)
-                  Delete(bare2);
-              }
-              Delete(tstr2);
-              if (tr2)
-                Delete(tr2);
-              Delete(ts2);
-            }
-          } else {
-            /* Fill in C++ default as a JS literal.  Reuse the
-               build_defaults_prologue logic per parm. */
-            String *val = Getattr(q2, "value");
-            SwigType *t2 = Getattr(q2, "type");
-            SwigType *tres = t2 ? SwigType_typedef_resolve_all(t2) : 0;
-            String *ts = SwigType_str(tres ? tres : t2, 0);
-            const char *cs = ts ? Char(ts) : "";
-            bool emitted = false;
-            if (val && Len(val) > 0) {
-              const char *vs = Char(val);
-              bool looks_numeric = false;
-              {
-                const char *q3 = vs;
-                while (*q3 == ' ')
-                  ++q3;
-                if (*q3 == '-' || *q3 == '+')
-                  ++q3;
-                if (*q3 >= '0' && *q3 <= '9')
-                  looks_numeric = true;
-              }
-              bool is_bool_kw = (strcmp(vs, "true") == 0 || strcmp(vs, "false") == 0);
-              bool is_string_lit = (vs[0] == '"');
-              if (is_bool_kw) {
-                Printv(t_call_args, vs, NIL);
-                emitted = true;
-              } else if (looks_numeric) {
-                if (strstr(cs, "long long")) {
-                  Printf(t_call_args, "%sn", vs);
-                } else {
-                  Printv(t_call_args, vs, NIL);
-                }
-                emitted = true;
-              } else if (is_string_lit) {
-                /* String-literal default for a 'const char*' /
-                   'std::string' parm: malloc it into wasm memory and
-                   pass the pointer, just like for explicit string args.
-                   Passing the raw JS string literal would make the
-                   wasm side read engine-internal memory ("emsc...").
-                   Reuse __ps<pi> naming. */
-                bool is_str_parm = false;
-                String *ctype3 = Getattr(q2, "tmap:ctype");
-                if (ctype3 && (Strstr(ctype3, "char*") || Strstr(ctype3, "char *"))) {
-                  is_str_parm = true;
-                } else if (strstr(cs, "string") || strstr(cs, "char")) {
-                  is_str_parm = true;
-                }
-                if (is_str_parm) {
-                  Printf(t_call_args, "__ps%d", pi);
-                  Printf(t_str_prologue,
-                         "            const __nps%d = M.lengthBytesUTF8(%s);\n"
-                         "            const __ps%d  = M._malloc(__nps%d + 1);\n"
-                         "            M.stringToUTF8(%s, __ps%d, __nps%d + 1);\n",
-                         pi,
-                         vs,
-                         pi,
-                         pi,
-                         vs,
-                         pi,
-                         pi);
-                  Printf(t_str_free, "            M._free(__ps%d);\n", pi);
-                } else {
-                  Printv(t_call_args, vs, NIL);
-                }
-                emitted = true;
-              }
-            }
-            if (!emitted)
-              Printv(t_call_args, "undefined", NIL);
-            if (ts)
-              Delete(ts);
-            if (tres)
-              Delete(tres);
-          }
-          ++pi;
-        }
-        Setattr(tentry, "call_args_js", t_call_args);
-        if (Len(t_str_prologue) > 0) {
-          Setattr(tentry, "str_prologue", t_str_prologue);
-          Setattr(tentry, "str_free", t_str_free);
-        } else {
-          Delete(t_str_prologue);
-          Delete(t_str_free);
-        }
-        /* prim_checks for the PRESENT primitive args: lets same-arity
-           overloads differing only in primitive types coexist (e.g.
-           Slice(i, bool) vs the Slice(start, stop, step=1) phantom). */
-        if (Len(t_prim) > 0)
-          Setattr(tentry, "prim_checks", t_prim);
-        else
-          Delete(t_prim);
-        Append(ctor_overloads, tentry);
-      }
+      String *defaults = build_defaults_prologue(p, count);
+      String *call_body = emit_js_body(p, 0, swig_name, "", n, false);
+      String *body = NewStringf("            const [%s] = args;\n%s%s", names, defaults, call_body);
+      Setattr(entry, "arity", arity);
+      Setattr(entry, "type_checks", checks);
+      Setattr(entry, "js_body", body);
+      Append(ctor_overloads, entry);
+      Delete(body);
+      Delete(call_body);
+      Delete(defaults);
+      Delete(names);
+      Delete(checks);
+      Delete(arity);
+      Delete(entry);
     }
 
     Delete(swig_name);
@@ -4306,15 +4039,22 @@ int WASM_JS::destructorHandler(Node *n) {
   if (class_cname) {
     String *cmangle = mangle(class_cname);
     String *swig_name = NewStringf("swig_%s_delete", cmangle);
-    Printf(class_cpp_section, "EMSCRIPTEN_KEEPALIVE void %s(%s* self) { delete self; }\n", swig_name, class_cname);
+    SwigType *void_type = NewString("void");
+    String *no_args = NewString("");
+    String *native_call = NewString("delete self");
+    String *call = extension_call(n, void_type, no_args, true, native_call);
+    Printf(class_cpp_section, "EMSCRIPTEN_KEEPALIVE void %s(%s* self) { %s; }\n", swig_name, class_cname, call);
+    Delete(call);
+    Delete(native_call);
+    Delete(no_args);
+    Delete(void_type);
     register_export(Char(swig_name));
     /* Optional manual release; unregister from FinalizationRegistry to */
     /* avoid double-free when GC eventually runs. */
     Printf(class_js_body,
            "    delete() {\n"
            "      if (this._ptr === 0) return;\n"
-           "      __fr_%s.unregister(this);\n"
-           "      M._%s(this._ptr);\n"
+           "      if (__fr_%s.unregister(this)) M._%s(this._ptr);\n"
            "      this._ptr = 0;\n"
            "    }\n",
            cmangle,
@@ -4357,9 +4097,12 @@ int WASM_JS::memberfunctionHandler(Node *n) {
   String *decls = parm_decls(p);
   String *args = parm_args(p);
   String *jsargs = js_arg_names(p);
-  String *ret_t = effective_return_ctype(rt, p);
-  String *call_e = NewStringf("self->%s(%s)", mname, args);
-  String *body = cpp_call_body(n, p, rt, call_e);
+  String *ret_t = effective_return_ctype(rt, p, n);
+  String *native_call = NewStringf("self->%s(%s)", mname, args);
+  String *call_e = extension_call(n, rt, args, true, native_call);
+  Delete(native_call);
+  String *body = cpp_call_body(n, p, rt, call_e, false);
+  String *guards = owned_input_handles(p);
 
   SwigType *self_ptr_t = NewString(class_cname);
   SwigType_add_pointer(self_ptr_t);
@@ -4372,6 +4115,8 @@ int WASM_JS::memberfunctionHandler(Node *n) {
      hash lookup only on the first call. */
   Printf(class_cpp_section,
          "EMSCRIPTEN_KEEPALIVE %s %s(EM_VAL self_handle%s%s) {\n"
+         "%s"
+         "  emscripten::val _self_owner = self_handle ? emscripten::val::take_ownership(self_handle) : emscripten::val::undefined();\n"
          "  static swig_type_info* __self_ti = SWIG_TypeQuery(\"%s\");\n"
          "  %s%s* self = 0;\n"
          "  {\n"
@@ -4385,6 +4130,7 @@ int WASM_JS::memberfunctionHandler(Node *n) {
          swig_name,
          Len(decls) > 0 ? ", " : "",
          decls,
+         guards,
          self_mangled,
          self_q,
          class_cname,
@@ -4434,6 +4180,7 @@ int WASM_JS::memberfunctionHandler(Node *n) {
   int lo_arity = (first_default_idx >= 0) ? first_default_idx : max_arity;
   for (int trunc = lo_arity; trunc <= max_arity; ++trunc) {
     Hash *entry = NewHash();
+    set_dispatch_rank(entry, n, p, trunc);
     Setattr(entry, "swig_name", Copy(swig_name));
     char ar_str[16];
     snprintf(ar_str, sizeof(ar_str), "%d", trunc);
@@ -4458,7 +4205,7 @@ int WASM_JS::memberfunctionHandler(Node *n) {
        prologue ('const aN = <C++-default>;' for N >= trunc).  Same
        pattern as staticmemberfunctionHandler. */
     String *defaults_prologue = build_defaults_prologue(p, trunc);
-    String *body_full = emit_js_body(p, eff_rt ? eff_rt : rt, swig_name, "__unwrap(this)");
+    String *body_full = emit_js_body(p, eff_rt ? eff_rt : rt, swig_name, "__unwrap(this)", n);
     String *body_with_defaults = NewStringf("%s%s", Char(defaults_prologue), Char(body_full));
     Setattr(entry, "js_body", body_with_defaults);
     Delete(body_full);
@@ -4509,6 +4256,7 @@ int WASM_JS::memberfunctionHandler(Node *n) {
   Delete(ret_t);
   Delete(call_e);
   Delete(body);
+  Delete(guards);
   return Language::memberfunctionHandler(n);
 }
 
@@ -4521,66 +4269,42 @@ int WASM_JS::membervariableHandler(Node *n) {
   String *get_n = NewStringf("swig_%s_%s_get", cmangle, fname);
   String *set_n = NewStringf("swig_%s_%s_set", cmangle, fname);
   SwigType *ft = Getattr(n, "type");
-  String *fts = SwigType_str(ft, 0);
+  String *ret = cpp_return_type(ft, n);
+  String *expression = NewStringf("self->%s", fname);
+  String *body = cpp_call_body(n, 0, ft, expression);
+  Printf(class_cpp_section, "EMSCRIPTEN_KEEPALIVE %s %s(const %s* self) {\n%s}\n", ret, get_n, class_cname, body);
+  register_export(Char(get_n));
+  String *jsbody = emit_js_body(0, ft, get_n, "this._ptr", n);
+  Printf(class_js_body, "    get %s() {\n      if (!this._ptr) throw new Error('Object has been deleted');\n%s    }\n", jsname, jsbody);
+  Delete(jsbody);
+  Delete(body);
+  Delete(expression);
+  Delete(ret);
 
-  bool is_string = (Strstr(fts, "std::string") != 0);
-
-  if (is_string) {
-    /* getter returns malloc'd char*; setter takes const char* and assigns */
-    Printf(class_cpp_section,
-           "EMSCRIPTEN_KEEPALIVE char* %s(const %s* self) {"
-           " const std::string& __s = self->%s;"
-           " char* __buf = (char*)malloc(__s.size()+1);"
-           " memcpy(__buf, __s.c_str(), __s.size()+1);"
-           " return __buf; }\n"
-           "EMSCRIPTEN_KEEPALIVE void %s(%s* self, const char* v) { self->%s = v; }\n",
-           get_n,
-           class_cname,
-           fname,
-           set_n,
-           class_cname,
-           fname);
-    register_export(Char(get_n));
+  if (!GetFlag(n, "feature:immutable") && !SwigType_isconst(ft)) {
+    Parm *value = NewParm(ft, "value", n);
+    name_parms(value);
+    String *decls = parm_decls(value);
+    String *args = parm_args(value);
+    SwigType *void_type = NewString("void");
+    expression = NewStringf("self->%s = %s", fname, args);
+    body = cpp_call_body(n, value, void_type, expression);
+    Printf(class_cpp_section, "EMSCRIPTEN_KEEPALIVE void %s(%s* self, %s) {\n%s}\n", set_n, class_cname, decls, body);
     register_export(Char(set_n));
-    Printf(class_js_body,
-           "    get %s()  { const __p=M._%s(this._ptr); const __s=M.UTF8ToString(__p); M._free(__p); return __s; }\n"
-           "    set %s(v) {\n"
-           "      const __n = M.lengthBytesUTF8(v); const __p = M._malloc(__n+1);\n"
-           "      M.stringToUTF8(v, __p, __n+1); M._%s(this._ptr, __p); M._free(__p);\n"
-           "    }\n",
-           jsname,
-           get_n,
-           jsname,
-           set_n);
-  } else {
-    Printf(class_cpp_section,
-           "EMSCRIPTEN_KEEPALIVE %s %s(const %s* self) { return self->%s; }\n"
-           "EMSCRIPTEN_KEEPALIVE void %s(%s* self, %s v) { self->%s = v; }\n",
-           fts,
-           get_n,
-           class_cname,
-           fname,
-           set_n,
-           class_cname,
-           fts,
-           fname);
-    register_export(Char(get_n));
-    register_export(Char(set_n));
-    Printf(class_js_body,
-           "    get %s()  { return M._%s(this._ptr); }\n"
-           "    set %s(v) { M._%s(this._ptr, v); }\n",
-           jsname,
-           get_n,
-           jsname,
-           set_n);
+    jsbody = emit_js_body(value, void_type, set_n, "this._ptr", n);
+    Printf(class_js_body, "    set %s(a0) {\n      if (!this._ptr) throw new Error('Object has been deleted');\n%s    }\n", jsname, jsbody);
+    Delete(jsbody);
+    Delete(body);
+    Delete(expression);
+    Delete(void_type);
+    Delete(args);
+    Delete(decls);
+    Delete(value);
   }
-
   stub_emit_variable(n, "  ");
-
   Delete(get_n);
   Delete(set_n);
   Delete(cmangle);
-  Delete(fts);
   return Language::membervariableHandler(n);
 }
 
@@ -4608,8 +4332,10 @@ int WASM_JS::staticmemberfunctionHandler(Node *n) {
   String *decls = parm_decls(p);
   String *args = parm_args(p);
   String *jsargs = js_arg_names(p);
-  String *ret_t = effective_return_ctype(rt, p);
-  String *call_e = NewStringf("%s::%s(%s)", class_cname, mname, args);
+  String *ret_t = effective_return_ctype(rt, p, n);
+  String *native_call = NewStringf("%s::%s(%s)", class_cname, mname, args);
+  String *call_e = extension_call(n, rt, args, false, native_call);
+  Delete(native_call);
   String *body = cpp_call_body(n, p, rt, call_e);
 
   Printf(class_cpp_section, "EMSCRIPTEN_KEEPALIVE %s %s(%s) {\n%s}\n", ret_t, swig_name, decls, body);
@@ -4666,6 +4392,7 @@ int WASM_JS::staticmemberfunctionHandler(Node *n) {
   int lo_arity = (first_default_idx >= 0) ? first_default_idx : max_arity;
   for (int trunc = lo_arity; trunc <= max_arity; ++trunc) {
     Hash *entry = NewHash();
+    set_dispatch_rank(entry, n, p, trunc);
     Setattr(entry, "swig_name", Copy(swig_name));
     char ar_str[16];
     snprintf(ar_str, sizeof(ar_str), "%d", trunc);
@@ -4689,7 +4416,7 @@ int WASM_JS::staticmemberfunctionHandler(Node *n) {
     }
     String *defaults_prologue = build_defaults_prologue(p, trunc);
     Setattr(entry, "jsargs", trunc_jsargs);
-    String *body_full = emit_js_body(p, rt, swig_name, "");
+    String *body_full = emit_js_body(p, rt, swig_name, "", n);
     String *body_with_defaults = NewStringf("%s%s", Char(defaults_prologue), Char(body_full));
     Setattr(entry, "js_body", body_with_defaults);
     Delete(body_full);
@@ -4775,7 +4502,7 @@ int WASM_JS::globalfunctionHandler(Node *n) {
   String *decls = parm_decls(p);
   String *args = parm_args(p);
   String *jsargs = js_arg_names(p);
-  String *ret_t = effective_return_ctype(rt, p);
+  String *ret_t = effective_return_ctype(rt, p, n);
   String *call_e = NewStringf("%s(%s)", fname, args);
   String *body = cpp_call_body(n, p, rt, call_e);
 
@@ -4794,7 +4521,7 @@ int WASM_JS::globalfunctionHandler(Node *n) {
     overloads = NewList();
     Setattr(global_overloads, jsname, overloads);
   }
-  String *js_body = emit_js_body(p, rt, swig_name, "");
+  String *js_body = emit_js_body(p, rt, swig_name, "", n);
   /* Resolve arg0's expected JS class name for the dispatcher's
      constructor.name check (kept for backwards-compat with the
      dispatcher's arg0_class slot).  Replaced by 'type_checks' below
@@ -4821,6 +4548,7 @@ int WASM_JS::globalfunctionHandler(Node *n) {
   int lo_arity = (first_def >= 0) ? first_def : max_arity;
   for (int trunc = lo_arity; trunc <= max_arity; ++trunc) {
     Hash *entry = NewHash();
+    set_dispatch_rank(entry, n, p, trunc);
     /* Build truncated jsargs list for this arity. */
     String *trunc_jsargs = NewString("");
     {
@@ -4893,6 +4621,39 @@ int WASM_JS::globalfunctionHandler(Node *n) {
   Delete(call_e);
   Delete(body);
   return Language::globalfunctionHandler(n);
+}
+
+int WASM_JS::constantWrapper(Node *n) {
+  if (enum_cname)
+    return SWIG_OK;
+  String *name = Getattr(n, "sym:name");
+  String *value = Getattr(n, "value");
+  if (!value)
+    value = Getattr(n, "name");
+  SwigType *type = Getattr(n, "type");
+  String *mangled = mangle(name);
+  String *wrapper = NewStringf("swig_constant_%s", mangled);
+  String *ctype = cpp_return_type(type, n);
+  String *body = cpp_call_body(n, 0, type, value);
+  Printf(f_cpp_wrappers, "EMSCRIPTEN_KEEPALIVE %s %s() {\n%s}\n", ctype, wrapper, body);
+  register_export(Char(wrapper));
+  String *jsbody = emit_js_body(0, type, wrapper, "", n);
+  Printf(f_js_module, "    get %s() {\n%s    },\n", name, jsbody);
+  if (stubs) {
+    Parm *mapped = NewParm(type, Getattr(n, "name"), n);
+    Swig_typemap_attach_parms("out", mapped, 0);
+    String *annotation = Getattr(mapped, "tmap:out:tsstub_out");
+    String *ts = annotation ? Copy(annotation) : type_to_ts(type, true);
+    Printf(f_stubs_module, "export const %s: %s;\n", name, ts);
+    Delete(ts);
+    Delete(mapped);
+  }
+  Delete(jsbody);
+  Delete(body);
+  Delete(ctype);
+  Delete(wrapper);
+  Delete(mangled);
+  return SWIG_OK;
 }
 
 int WASM_JS::enumDeclaration(Node *n) {

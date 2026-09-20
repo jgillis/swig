@@ -1,7 +1,11 @@
-/* Minimal std::pair declaration for wasm_js — opaque pointer convention. */
+%include <std_common.i>
 namespace std {
-  template <typename T1, typename T2> struct pair {
-    T1 first;
-    T2 second;
+  template <class A, class B> struct pair {
+    %wasm_container(std::pair<A, B>)
+    A first;
+    B second;
+    pair();
+    pair(A first, B second);
+    pair(const pair &other);
   };
 }

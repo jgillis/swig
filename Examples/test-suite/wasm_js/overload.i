@@ -33,3 +33,27 @@ struct Combined : Left, GenCombined {
 };
 int read_right(GenCombined *value) { return value->right_value; }
 %}
+
+%typemap(typecheck, precedence=5) int preferred {
+  $1 = 1;
+}
+%typemap(typecheck, precedence=20) double fallback {
+  $1 = 1;
+}
+%typemap(jstypecheck) int preferred "Number.isInteger($input)"
+%typemap(jstypecheck) double fallback "typeof $input === 'number'"
+%inline %{
+std::string ranked(double fallback) { (void)fallback; return "fallback"; }
+int ranked(int preferred) { return preferred + 100; }
+class Fuzzy {
+  int value_;
+public:
+  Fuzzy(double fallback, int offset = 1) : value_(static_cast<int>(fallback) + offset + 200) {}
+  Fuzzy(int preferred, int offset = 1) : value_(preferred + offset + 300) {}
+  int value() const { return value_; }
+  std::string member(double fallback) { (void)fallback; return "fallback"; }
+  int member(int preferred) { return preferred + 400; }
+  static std::string stat(double fallback) { (void)fallback; return "fallback"; }
+  static int stat(int preferred) { return preferred + 500; }
+};
+%}

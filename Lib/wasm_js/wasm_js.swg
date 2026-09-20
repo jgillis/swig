@@ -1,20 +1,19 @@
 /* wasm_js.swg
  *
  * Typemap library for the -wasm-js target. Uses SWIG's STANDARD typemap
- * names (in / out / freearg / ctype) so existing SWIG library files
- * ('Lib/typemaps/std_string.swg', etc.) can be %include'd without
- * modification by users.
+ * names (in / out / freearg / ctype) with a JavaScript handle ABI for
+ * wrapped objects, strings and containers.
  *
  * Each wrapped function emits a wasm-exported C function with the shape:
  *
  *    EMSCRIPTEN_KEEPALIVE <ret_ctype> swig_foo(<in_ctype>0 obj0, <in_ctype>1 obj1, ...) {
  *      T0 arg1; T1 arg2; ...;     // C++ locals
  *      <in typemap body>:         // populates argN from objN
- *        arg1 = std::string(obj0);   // example for std::string
+ *        arg1 = swig_wasmjs::borrowed_value(obj0).as<std::string>();
  *      ResultType result;
  *      result = call(arg1, arg2, ...);
  *      <out typemap body>:        // converts result -> _outv
- *        char* __buf = malloc(...); memcpy(...); _outv = __buf;
+ *        _outv = emscripten::val(result).release_ownership();
  *      <freearg blocks>           // cleanup, if any
  *      return _outv;
  *    }
@@ -36,6 +35,7 @@
 #include <emscripten.h>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 %}
 
@@ -62,7 +62,7 @@
 
 /* Pull in the SWIG runtime: swigrun.swg (swig_type_info etc.) + */
 /* swigerrors.swg + wasm_jsrun.swg (SWIG_ConvertPtr / SWIG_NewPointerObj */
-/* as identity casts).  The runtime block is emitted before the wrappers */
+/* for checked proxy conversion).  The runtime block precedes wrappers */
 /* in wasm_js.cxx::top(). */
 %include <wasm_jsruntime.swg>
 
@@ -100,66 +100,28 @@ _argouts[_argout_idx++] = (void*)(X);
 /* std::string */
 /* ============================================================================ */
 
-%typemap(ctype) std::string, const std::string&, std::string& "const char*"
-
-/* Value: local is std::string, typemap assigns directly. */
-/* 'pystub_in="str"' lets the -stubs emitter render std::string params as */
-
-/* stub annotation here). */
-%typemap(in, tsstub_in="string") std::string %{ $1 = std::string($input); %}
-
-/* Reference: parm_prologue declared 'std::string* arg<N>;' and SWIG wraps */
-/* the body in a per-parm { } block.  The temp std::string MUST live at */
-/* function scope, not inside that block — otherwise it's destroyed before */
-/* the C++ call and arg<N> dangles.  SSO masks this for short strings; */
-/* heap-allocated long strings dereference freed memory and return junk */
-/* (e.g. allocator free-pattern bytes via name.size()). */
-/*  */
-/* Use SWIG's local-variable typemap declaration '(std::string tmp$argnum)' */
-/* so 'tmp$argnum' lives at function scope outside the parm block.  Suffix */
-/* with $argnum so multiple string parms don't shadow each other. */
-/* Multi-pattern + '(T m)' locals: GRAMMAR QUIRK — the (T m) only */
-/* attaches to the IMMEDIATELY PRECEDING pattern (per typemap_parm in */
-/* parser.y).  To get locals on BOTH patterns, repeat per pattern. */
-/* Then wasm_js.cxx::parm_prologue mangles 'm' -> 'm<argnum>' per */
-/* parm position so multi-string-arg methods don't collide. */
-%typemap(in, tsstub_in="string") const std::string& (std::string m), std::string& (std::string m) %{
-  m = std::string($input);
-  $1 = &m;
-%}
-
-/* Value return: $1 is a std::string (declared 'std::string result;'). */
-%typemap(out, tsstub_out="string") std::string %{
-  {
-    char* __buf = (char*)malloc($1.size() + 1);
-    memcpy(__buf, $1.c_str(), $1.size() + 1);
-    $result = __buf;
-  }
-%}
-
-/* Reference return: wasm_js.cxx's cpp_call_body declares 'result' as */
-/* 'std::string*' (via SwigType_ltype), so $1 is 'std::string*'.  Deref */
-/* before reading. */
-%typemap(out, tsstub_out="string") const std::string&, std::string& %{
-  {
-    char* __buf = (char*)malloc($1->size() + 1);
-    memcpy(__buf, $1->c_str(), $1->size() + 1);
-    $result = __buf;
-  }
-%}
-
-/* JS side: stringToUTF8 into a malloc'd buffer; free after the call. */
-%typemap(jsin) std::string, const std::string&, std::string& %{
-      const __nps$argnum = M.lengthBytesUTF8($input);
-      const __ps$argnum  = M._malloc(__nps$argnum + 1);
-      M.stringToUTF8($input, __ps$argnum, __nps$argnum + 1);
-%}
-%typemap(jsarg)  std::string, const std::string&, std::string& "__ps$argnum"
-%typemap(jsfree) std::string, const std::string&, std::string& %{
-      M._free(__ps$argnum);
-%}
-%typemap(jsout) std::string, const std::string&, std::string&
-"(()=>{const __p=$call;const __s=M.UTF8ToString(__p);M._free(__p);return __s;})()"
+%typemap(ctype) std::string, const std::string&, std::string& "EM_VAL"
+%typemap(in, tsstub_in="string") std::string {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  if (value.typeOf().as<std::string>() != "string")
+    SWIG_exception_fail(SWIG_TypeError, "Expected a string");
+  $1 = value.as<std::string>();
+}
+%typemap(in, tsstub_in="string") const std::string& (std::string temporary), std::string& (std::string temporary) {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  if (value.typeOf().as<std::string>() != "string")
+    SWIG_exception_fail(SWIG_TypeError, "Expected a string");
+  temporary = value.as<std::string>();
+  $1 = &temporary;
+}
+%typemap(out, tsstub_out="string") std::string {
+  $result = emscripten::val($1).release_ownership();
+}
+%typemap(out, tsstub_out="string") const std::string&, std::string& {
+  $result = emscripten::val(*$1).release_ownership();
+}
+%typemap(jsarg) std::string, const std::string&, std::string& "__unwrap($input)"
+%typemap(jsout) std::string, const std::string&, std::string& "__from_handle($call)"
 
 /* ============================================================================ */
 /* bool — round-trip through int for clean 0/1 across the wasm boundary */
@@ -172,33 +134,8 @@ _argouts[_argout_idx++] = (void*)(X);
 
 /* ============================================================================ */
 
-/* the JS arg with BigInt() at the wasm-call boundary so users can pass */
-/* plain 'Number' literals for matrix dimensions, indices, etc.  Without */
-/* this, embind throws "Cannot convert ... to BigInt" when a Number is */
-/* passed to a wasm import declared with i64 params.  The wrap is */
-/* idempotent for already-BigInt values. */
-/* ============================================================================ */
-
-%typemap(jsarg) long long, const long long&, long long&,
-               unsigned long long, const unsigned long long&, unsigned long long&
-               "BigInt($input)"
-
-/* ============================================================================ */
-/* %wasm_vec(T, NAME) — JS-side 'Array <-> XVector' autoconversion typemaps */
-/* ============================================================================ */
-/*  */
-/* Users only ever pass / receive plain JS arrays.  The internal */
-/* 'NameVector' proxy class is a SWIG implementation detail.  The four */
-/* jsin/jsarg/jsfree/jsout typemaps emitted by this macro handle: */
-/*  */
-/* - INPUT:  jsin builds a temp XVector from a JS array; */
-/* jsarg passes the temp's pointer; */
-/* jsfree deletes the temp. */
-/* - OUTPUT: jsout drains the wasm-returned XVector into a JS array */
-/* via __vec_to_arr (helper emitted in f_js_pre). */
-/*  */
-
-/* std::vector<T>;' so the JS class name is statically available. */
+/* Optional bridge for interfaces using explicit vector proxy conversions.
+   Native arrays are copied into temporary proxies and cleaned after the call. */
 %define %wasm_vec(T, NAME)
 %typemap(jsin) std::vector<T>, const std::vector<T>&, std::vector<T>& %{
       let __vp$argnum = $input;
@@ -206,35 +143,23 @@ _argouts[_argout_idx++] = (void*)(X);
       if (Array.isArray($input)) {
         __vp$argnum = new NAME();
         __vown$argnum = true;
-        for (const __x of $input) __vp$argnum.push_back(__x);
+        try {
+          for (const __x of $input) __vp$argnum.push_back(__x);
+        } catch (__error) {
+          __vp$argnum.delete();
+          __vown$argnum = false;
+          throw __error;
+        }
       }
 %}
 %typemap(jsarg) std::vector<T>, const std::vector<T>&, std::vector<T>& "__unwrap(__vp$argnum)"
 %typemap(jsfree) std::vector<T>, const std::vector<T>&, std::vector<T>& %{
       if (__vown$argnum && __vp$argnum.delete) __vp$argnum.delete();
 %}
-/* Vector returns: with the wasmjs_vector_descriptor<T> trait */
-
-/* passes the per-T swig_type_info* to SWIG_NewPointerObj, which then */
-/* routes through type->clientdata + M.__wrap_NAME(ptr) to produce a */
-/* fully-wrapped NAME proxy directly.  __from_handle just unboxes it, */
-/* __vec_to_arr drains it -- no JS-side rewrap required. */
 %typemap(jsout) std::vector<T>, const std::vector<T>&, std::vector<T>&
 "__vec_to_arr(__from_handle($call))"
 
-/* Per-T trait specialization: store the JS class name as a static */
-/* string.  from_ptr<std::vector<T>> reads it and routes through */
-/* SWIG_WASMJS_WrapByName(ptr, name) -> M.__wrap_<NAME>(ptr). */
-/* (#NAME here is the SWIG preprocessor stringification of the macro */
-
 %enddef
-
-/* (Note: the previous '%wasm_vector(T)' macro -- an opaque-builder */
-/* convention for vector types -- has been removed.  Vector marshaling */
-
-/* templates (which delegate to SWIG_ConvertPtr / SWIG_NewPointerObj), */
-/* plus '%wasm_vec(T, NAME)' above for the JS-side Array <-> XVector */
-/* autoconversion typemaps.) */
 
 /* ============================================================================ */
 /* Director (C++ <-> JS) typemaps for primitives. */
@@ -291,15 +216,207 @@ _argouts[_argout_idx++] = (void*)(X);
 
 /* Wrapped class pointers use JavaScript value handles at the wasm boundary. */
 %typemap(ctype) SWIGTYPE *, SWIGTYPE & "EM_VAL"
-%typemap(in) SWIGTYPE *, SWIGTYPE & {
+%typemap(in, tsstub_proxy="1") SWIGTYPE & {
   void *pointer = 0;
   if (!SWIG_IsOK(SWIG_ConvertPtr($input, &pointer, $descriptor, 0))) {
     SWIG_exception_fail(SWIG_TypeError, "Incompatible wrapped object");
   }
   $1 = ($1_ltype)pointer;
 }
-%typemap(out) SWIGTYPE *, SWIGTYPE & {
+%typemap(out, tsstub_proxy="1") SWIGTYPE & {
   $result = SWIG_NewPointerObj((void *)$1, $descriptor, $owner);
+}
+%typemap(in, tsstub_proxy="1", tsstub_nullable="1") SWIGTYPE * {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  void *pointer = 0;
+  if (!value.isNull() && !SWIG_IsOK(SWIG_ConvertPtr($input, &pointer, $descriptor, 0)))
+    SWIG_exception_fail(SWIG_TypeError, "Incompatible wrapped pointer");
+  $1 = ($1_ltype)pointer;
+}
+%typemap(out, tsstub_proxy="1", tsstub_nullable="1") SWIGTYPE * {
+  $result = SWIG_NewPointerObj((void *)$1, $descriptor, $owner);
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER) SWIGTYPE * {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  void *pointer = 0;
+  $1 = value.isNull() || SWIG_IsOK(SWIG_ConvertPtr($input, &pointer, $descriptor, 0));
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER) SWIGTYPE & {
+  void *pointer = 0;
+  $1 = SWIG_IsOK(SWIG_ConvertPtr($input, &pointer, $descriptor, 0)) && pointer;
 }
 %typemap(jsarg) SWIGTYPE *, SWIGTYPE & "__unwrap($input)"
 %typemap(jsout) SWIGTYPE *, SWIGTYPE & "__from_handle($call)"
+
+/* Class values cross the wasm ABI as handles, never native C++ objects. */
+%typemap(ctype) SWIGTYPE "EM_VAL"
+%typemap(in, tsstub_proxy="1") SWIGTYPE {
+  void *pointer = 0;
+  if (!SWIG_IsOK(SWIG_ConvertPtr($input, &pointer, $&descriptor, 0)) || !pointer) {
+    SWIG_exception_fail(SWIG_TypeError, "Incompatible wrapped value");
+  }
+  $1 = *($&1_ltype)pointer;
+}
+%typemap(out, tsstub_proxy="1") SWIGTYPE {
+  swig_type_info *descriptor = $&descriptor;
+  if (!descriptor || !descriptor->clientdata)
+    SWIG_exception_fail(SWIG_TypeError, "Cannot return an unregistered class by value");
+  std::unique_ptr<$1_ltype> copy(new $1_ltype($1));
+  $result = SWIG_NewPointerObj(copy.get(), descriptor, SWIG_POINTER_OWN);
+  copy.release();
+}
+%typemap(jsarg) SWIGTYPE "__unwrap($input)"
+%typemap(jsout) SWIGTYPE "__from_handle($call)"
+
+/* Keep scalar values on the native wasm ABI instead of the class fallback. */
+%define %wasm_scalar_value(TYPE)
+%typemap(ctype) TYPE "TYPE"
+%typemap(in) TYPE { $1 = $input; }
+%typemap(out) TYPE { $result = $1; }
+%typemap(jsarg, wasmjs_scalar="1") TYPE "$input"
+%typemap(jsout) TYPE "$call"
+%enddef
+%wasm_scalar_value(char)
+%wasm_scalar_value(signed char)
+%wasm_scalar_value(unsigned char)
+%wasm_scalar_value(short)
+%wasm_scalar_value(unsigned short)
+%wasm_scalar_value(int)
+%wasm_scalar_value(unsigned int)
+%wasm_scalar_value(long)
+%wasm_scalar_value(unsigned long)
+%wasm_scalar_value(long long)
+%wasm_scalar_value(unsigned long long)
+%wasm_scalar_value(float)
+%wasm_scalar_value(double)
+%typemap(ctype) enum SWIGTYPE "int"
+%typemap(in) enum SWIGTYPE { $1 = ($1_ltype)$input; }
+%typemap(out) enum SWIGTYPE { $result = (int)$1; }
+%typemap(jsarg, wasmjs_scalar="1") enum SWIGTYPE "$input"
+%typemap(jsout) enum SWIGTYPE "$call"
+%typemap(jsout) void "$call"
+%typemap(jsarg, wasmjs_scalar="1") bool "$input"
+
+%define %wasm_integer_check(TYPE, LOW, HIGH)
+%typemap(jstypecheck, wasmjs_scalar="1") TYPE "Number.isInteger($input) && $input >= LOW && $input <= HIGH"
+%typemap(jsin, wasmjs_scalar="1") TYPE {
+  if (!Number.isInteger($input) || $input < LOW || $input > HIGH)
+    throw new TypeError("Expected an integer in the native type's range");
+}
+%enddef
+%wasm_integer_check(char, -128, 127)
+%wasm_integer_check(signed char, -128, 127)
+%wasm_integer_check(unsigned char, 0, 255)
+%wasm_integer_check(short, -32768, 32767)
+%wasm_integer_check(unsigned short, 0, 65535)
+%wasm_integer_check(int, -2147483648, 2147483647)
+%wasm_integer_check(unsigned int, 0, 4294967295)
+%wasm_integer_check(long, -2147483648, 2147483647)
+%wasm_integer_check(unsigned long, 0, 4294967295)
+%typemap(jstypecheck, wasmjs_scalar="1") long long "typeof $input === 'bigint' && BigInt.asIntN(64, $input) === $input"
+%typemap(jstypecheck, wasmjs_scalar="1") unsigned long long "typeof $input === 'bigint' && BigInt.asUintN(64, $input) === $input"
+%typemap(jsin, wasmjs_scalar="1") long long {
+  if (typeof $input !== 'bigint' || BigInt.asIntN(64, $input) !== $input)
+    throw new TypeError("Expected a signed 64-bit bigint");
+}
+%typemap(jsin, wasmjs_scalar="1") unsigned long long {
+  if (typeof $input !== 'bigint' || BigInt.asUintN(64, $input) !== $input)
+    throw new TypeError("Expected an unsigned 64-bit bigint");
+}
+%typemap(jstypecheck, wasmjs_scalar="1") float, double "typeof $input === 'number'"
+%typemap(jsin, wasmjs_scalar="1") float, double {
+  if (typeof $input !== 'number') throw new TypeError("Expected a number");
+}
+%typemap(jstypecheck, wasmjs_scalar="1") bool "typeof $input === 'boolean'"
+%typemap(jsin, wasmjs_scalar="1") bool {
+  if (typeof $input !== 'boolean') throw new TypeError("Expected a boolean");
+}
+%typemap(jstypecheck) std::string, const std::string&, std::string& "typeof $input === 'string'"
+
+/* Conventional NUL-terminated C strings use value handles too. */
+%typemap(ctype) char *, const char * "EM_VAL"
+%typemap(in, tsstub_in="string") char * (std::string temporary), const char * (std::string temporary) {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  if (value.typeOf().as<std::string>() != "string")
+    SWIG_exception_fail(SWIG_TypeError, "Expected a string");
+  temporary = value.as<std::string>();
+  $1 = const_cast<char *>(temporary.c_str());
+}
+%typemap(out, tsstub_out="string | null") char *, const char * {
+  $result = ($1 ? emscripten::val(std::string($1)) : emscripten::val::null()).release_ownership();
+}
+%typemap(jsarg) char *, const char * "__unwrap($input)"
+%typemap(jsout) char *, const char * "__from_handle($call)"
+%typemap(jstypecheck) char *, const char * "typeof $input === 'string'"
+
+%typemap(jsout) unsigned int, unsigned long "(($call) >>> 0)"
+%typemap(jsout) unsigned long long "BigInt.asUintN(64, $call)"
+
+/* C++ probes consume JavaScript handles regardless of the native call ABI. */
+%define %wasm_scalar_typecheck(TYPE, PRECEDENCE, KIND)
+%typemap(typecheck, precedence=PRECEDENCE, wasmjs_scalar="1", fragment=SWIG_AsVal_frag(TYPE)) TYPE {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  $1 = value.typeOf().as<std::string>() == KIND &&
+       SWIG_IsOK(SWIG_AsVal_dec(TYPE)(reinterpret_cast<void *>($input), 0));
+}
+%enddef
+%wasm_scalar_typecheck(bool, SWIG_TYPECHECK_BOOL, "boolean")
+%wasm_scalar_typecheck(char, SWIG_TYPECHECK_INT8, "number")
+%wasm_scalar_typecheck(signed char, SWIG_TYPECHECK_INT8, "number")
+%wasm_scalar_typecheck(unsigned char, SWIG_TYPECHECK_UINT8, "number")
+%wasm_scalar_typecheck(short, SWIG_TYPECHECK_INT16, "number")
+%wasm_scalar_typecheck(unsigned short, SWIG_TYPECHECK_UINT16, "number")
+%wasm_scalar_typecheck(int, SWIG_TYPECHECK_INT32, "number")
+%wasm_scalar_typecheck(unsigned int, SWIG_TYPECHECK_UINT32, "number")
+%wasm_scalar_typecheck(long, SWIG_TYPECHECK_INT32, "number")
+%wasm_scalar_typecheck(unsigned long, SWIG_TYPECHECK_UINT32, "number")
+%wasm_scalar_typecheck(long long, SWIG_TYPECHECK_INT64, "bigint")
+%wasm_scalar_typecheck(unsigned long long, SWIG_TYPECHECK_UINT64, "bigint")
+%typemap(typecheck, precedence=SWIG_TYPECHECK_FLOAT, wasmjs_scalar="1") float {
+  $1 = swig_wasmjs::borrowed_value($input).typeOf().as<std::string>() == "number";
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_DOUBLE, wasmjs_scalar="1") double {
+  $1 = swig_wasmjs::borrowed_value($input).typeOf().as<std::string>() == "number";
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_STRING) std::string, const std::string &, std::string &, char *, const char * {
+  $1 = swig_wasmjs::borrowed_value($input).typeOf().as<std::string>() == "string";
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_INT32, fragment=SWIG_AsVal_frag(int)) enum SWIGTYPE {
+  emscripten::val value = swig_wasmjs::borrowed_value($input);
+  $1 = value.typeOf().as<std::string>() == "number" &&
+       SWIG_IsOK(SWIG_AsVal_dec(int)(reinterpret_cast<void *>($input), 0));
+}
+%typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER) SWIGTYPE {
+  void *pointer = 0;
+  $1 = SWIG_IsOK(SWIG_ConvertPtr($input, &pointer, $&descriptor, 0)) && pointer;
+}
+
+/* Const scalar references borrow a wrapper-local value for the native call.
+   Mutable scalar references retain pointer semantics unless explicitly mapped. */
+%define %wasm_scalar_const_reference(TYPE)
+%typemap(ctype) const TYPE & = TYPE;
+%typemap(in) const TYPE & (TYPE temporary) {
+  temporary = (TYPE)$input;
+  $1 = &temporary;
+}
+%typemap(out) const TYPE & { $result = *$1; }
+%typemap(jsin) const TYPE & = TYPE;
+%typemap(jsarg) const TYPE & = TYPE;
+%typemap(jsout) const TYPE & = TYPE;
+%typemap(jstypecheck) const TYPE & = TYPE;
+%typemap(typecheck) const TYPE & = TYPE;
+%enddef
+%wasm_scalar_const_reference(bool)
+%wasm_scalar_const_reference(char)
+%wasm_scalar_const_reference(signed char)
+%wasm_scalar_const_reference(unsigned char)
+%wasm_scalar_const_reference(short)
+%wasm_scalar_const_reference(unsigned short)
+%wasm_scalar_const_reference(int)
+%wasm_scalar_const_reference(unsigned int)
+%wasm_scalar_const_reference(long)
+%wasm_scalar_const_reference(unsigned long)
+%wasm_scalar_const_reference(long long)
+%wasm_scalar_const_reference(unsigned long long)
+%wasm_scalar_const_reference(float)
+%wasm_scalar_const_reference(double)

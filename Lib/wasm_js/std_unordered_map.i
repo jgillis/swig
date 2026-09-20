@@ -1,10 +1,10 @@
 %include <std_common.i>
 namespace std {
-  template <class K, class V, class Compare = std::less<K>, class Allocator = std::allocator<std::pair<const K, V> >> class map {
-    %wasm_container(std::map<K, V, Compare, Allocator>)
+  template <class K, class V, class Hash = std::hash<K>, class Equal = std::equal_to<K>, class Allocator = std::allocator<std::pair<const K, V> >> class unordered_map {
+    %wasm_container(std::unordered_map<K, V, Hash, Equal, Allocator>)
   public:
-    map();
-    map(const map &other);
+    unordered_map();
+    unordered_map(const unordered_map &other);
     unsigned long size() const;
     bool empty() const;
     void clear();
@@ -12,7 +12,7 @@ namespace std {
     unsigned long count(K key) const;
     %extend {
       V get(K key) const {
-        typename std::map<K, V, Compare, Allocator>::const_iterator it = $self->find(key);
+        typename std::unordered_map<K, V, Hash, Equal, Allocator>::const_iterator it = $self->find(key);
         if (it == $self->end()) throw std::out_of_range("map key not found");
         return it->second;
       }
