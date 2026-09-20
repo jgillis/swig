@@ -3,6 +3,7 @@
 %feature("python:stub:overloads");
 %feature("compactdefaultargs");
 %feature("python:stub:overloads", "0") broad;
+%feature("python:stub:overloads", rank="-2") conflicting(long);
 %feature("compactdefaultargs", "0") defaults;
 %feature("compactdefaultargs", "0") ranked_defaults;
 %feature("compactdefaultargs", "0") ranked_arities;
@@ -68,4 +69,36 @@ struct DirectorChoice {
   virtual int get() const { return value; }
   int value;
 };
+%}
+
+%include <std_vector.i>
+%template(StringVector) std::vector<std::string>;
+%typemap(pytyping) const std::vector<std::string> & "typing.Sequence[str]"
+%typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER) const std::vector<std::string> & {
+  $1 = PySequence_Check($input) && !PyUnicode_Check($input) && !PyBytes_Check($input);
+}
+%feature("python:stub:overloads", rank="-1") text_kind(const std::string &);
+%feature("compactdefaultargs", "0") text_defaults;
+%feature("python:stub:overloads", rank="5") text_defaults;
+%feature("python:stub:overloads", rank="-1") text_defaults(const std::string &, int);
+%feature("python:stub:overloads", rank="+7") same_rank;
+%feature("python:stub:overloads", rank="-2147483648") min_rank;
+%feature("python:stub:overloads", rank="2147483647") max_rank;
+%inline %{
+int text_kind(const std::vector<std::string> &items) { return (int)items.size(); }
+std::string text_kind(const std::string &text) { return text; }
+int text_defaults(const std::vector<std::string> &items, int extra = 2) { return (int)items.size() + extra; }
+std::string text_defaults(const std::string &text, int extra = 2) { return text + std::string(extra, '!'); }
+int same_rank(int value) { return value; }
+int same_rank(bool value) { return value ? 17 : 0; }
+int min_rank(int value) { return value; }
+int min_rank(bool value) { return value ? 17 : 0; }
+int max_rank(int value) { return value; }
+int max_rank(bool value) { return value ? 17 : 0; }
+%}
+
+%typemap(default) int synthesized "$1 = 7;"
+%inline %{
+int typemap_default(int synthesized) { return synthesized; }
+std::string typemap_default(std::string text) { return text; }
 %}

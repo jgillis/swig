@@ -3250,7 +3250,33 @@ public:
 
   /* Cache an overload while its wrapped parameter and return types are available. */
   void cacheOverloadStub(Node *n) {
-    if (!pyi_stub || !GetFlag(n, "feature:python:stub:overloads") || !Getattr(n, "sym:overloaded") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING)
+    if (!pyi_stub || !GetFlag(n, "feature:python:stub:overloads") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING)
+      return;
+
+    Node *rank_source = Getattr(n, "defaultargs");
+    if (!rank_source)
+      rank_source = n;
+    String *rank = Getattr(rank_source, "feature:python:stub:overloads:rank");
+    int priority = 0;
+    if (rank) {
+      const char *value = Char(rank);
+      const char *digits = value;
+      if (*digits == '+' || *digits == '-')
+        ++digits;
+      const char *end_digits = digits;
+      while (*end_digits >= '0' && *end_digits <= '9')
+        ++end_digits;
+      errno = 0;
+      char *end;
+      long parsed = strtol(value, &end, 10);
+      if (digits == end_digits || *end_digits || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
+        Swig_error(Getfile(n), Getline(n), "python:stub:overloads rank must be a signed integer between %d and %d, got '%s'.\n", INT_MIN, INT_MAX, rank);
+        return;
+      }
+      priority = (int)parsed;
+    }
+    SetInt(n, "python:stub:overload:rank", priority);
+    if (!Getattr(n, "sym:overloaded"))
       return;
 
     ParmList *parms = Getattr(n, "wrap:parms");
@@ -3271,7 +3297,7 @@ public:
         if (index)
           Append(signature, ", ");
         Printf(signature, "__arg%d: \"%s\"", ++index, type ? type : "typing.Any");
-        if (Getattr(p, "value"))
+        if (Getattr(p, "value") || Getattr(p, "tmap:default"))
           Append(signature, " = ...");
         Delete(type);
       }
@@ -3284,13 +3310,23 @@ public:
     Delete(result);
   }
 
-  /* Emit opt-in overload declarations in the order used by runtime dispatch. */
+  /* Emit opt-in overload declarations, preserving runtime order within each explicit rank. */
   bool emitOverloadStubs(Node *n, File *destination, const String *name, const String *indent, bool instance, bool is_static, bool constructor) {
     if (!GetFlag(n, "feature:python:stub:overloads") || getTypeAnnotationMode(n) != TYPE_ANNOTATION_TYPING || !is_real_overloaded(n))
       return false;
     List *ranked = Swig_overload_rank(n, true);
     if (!ranked)
       return false;
+    List *ordered = NewList();
+    for (Iterator it = First(ranked); it.item; it = Next(it)) {
+      int position = 0;
+      int rank = GetInt(it.item, "python:stub:overload:rank");
+      while (position < Len(ordered) && GetInt(Getitem(ordered, position), "python:stub:overload:rank") <= rank)
+        ++position;
+      Insert(ordered, position, it.item);
+    }
+    Delete(ranked);
+    ranked = ordered;
     List *signatures = NewList();
     Hash *returns = NewHash();
     bool complete = true;

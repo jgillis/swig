@@ -46,3 +46,22 @@ explicit_director = DirectorChoice(3, 4)
 copied_director = DirectorChoice(parameter_director)
 DirectorChoice("wrong")  # type: ignore
 DirectorChoice(1, 2, 3)  # type: ignore
+
+from python_pyi_overloads import text_kind, text_defaults
+scalar_text: str = text_kind("hello")
+sequence_size: int = text_kind(["hello", "world"])
+scalar_default: str = text_defaults("hello")
+scalar_explicit: str = text_defaults("hello", 1)
+sequence_default: int = text_defaults(["hello"])
+sequence_explicit: int = text_defaults(["hello"], 3)
+wrong_scalar: int = text_kind("hello")  # type: ignore
+wrong_sequence: str = text_kind(["hello"])  # type: ignore
+wrong_scalar_default: int = text_defaults("hello")  # type: ignore
+wrong_sequence_default: str = text_defaults(["hello"])  # type: ignore
+
+from python_pyi_overloads import typemap_default
+typemap_omitted: int = typemap_default()
+typemap_integer: int = typemap_default(3)
+typemap_string: str = typemap_default("hello")
+typemap_wrong: str = typemap_default()  # type: ignore
+typemap_default([])  # type: ignore

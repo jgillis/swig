@@ -76,3 +76,26 @@ director = next(item for item in tree.body if isinstance(item, ast.ClassDef) and
 constructors = [item for item in director.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"]
 swig_check(sorted(len(item.args.args) for item in constructors), [1, 2, 3])
 swig_assert(all(item.args.vararg is None for item in constructors), "Director constructors need explicit signatures")
+
+swig_check(m.text_kind("ab"), "ab")
+swig_check(m.text_kind(["a", "b"]), 2)
+swig_check(m.text_kind(("a", "b")), 2)
+swig_check(m.text_defaults("ab"), "ab!!")
+swig_check(m.text_defaults("ab", 1), "ab!")
+swig_check(m.text_defaults(["a", "b"]), 4)
+swig_check(m.text_defaults(["a"], 3), 4)
+for name in ("same_rank", "min_rank", "max_rank"):
+    swig_check(getattr(m, name)(True), 17)
+    swig_check(ast.literal_eval(functions[name][0].args.args[0].annotation), "bool")
+swig_check(ast.literal_eval(functions["text_kind"][0].args.args[0].annotation), "str")
+swig_check([ast.literal_eval(item.args.args[0].annotation) for item in functions["text_defaults"]],
+           ["str", "str", "typing.Sequence[str]", "typing.Sequence[str]"])
+swig_check([len(item.args.args) for item in functions["text_defaults"]], [1, 2, 1, 2])
+
+swig_check(ast.literal_eval(functions["conflicting"][0].returns), "typing.Union[str, int]")
+
+swig_check(m.typemap_default(), 7)
+swig_check(m.typemap_default(3), 3)
+swig_check(m.typemap_default("hello"), "hello")
+int_default = next(item for item in functions["typemap_default"] if ast.literal_eval(item.returns) == "int")
+swig_check(len(int_default.args.defaults), 1)

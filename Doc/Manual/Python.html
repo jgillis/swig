@@ -7954,12 +7954,36 @@ convention supported by type checkers for Python versions before 3.8.
 </p>
 
 <p>
-Declarations follow the runtime overload ordering, including the shorter signatures
+By default, declarations follow the runtime overload ordering, including the shorter signatures
 generated for default arguments. These signatures can have different priorities
 at different argument counts and are retained individually. Overloads with identical
 Python parameter annotations are combined; if their return annotations differ,
 the combined declaration returns a <tt>typing.Union</tt>. A single remaining
 signature does not receive an <tt>@typing.overload</tt> decorator.
+</p>
+
+<p>
+An optional <tt>rank</tt> attribute changes the order of declarations in the stub.
+Lower ranks come first; the default is zero. Equal ranks retain runtime dispatch
+order. The value must be a signed decimal integer within the C <tt>int</tt> range.
+Apply the attribute to a particular C++ signature when its Python annotation is
+more specific than another overload's annotation:
+</p>
+
+<div class="code"><pre>
+%feature("python:stub:overloads") text_kind;
+%feature("python:stub:overloads", rank="-1") text_kind(const std::string &amp;);
+int text_kind(const std::vector&lt;std::string&gt; &amp;);
+std::string text_kind(const std::string &amp;);
+</pre></div>
+
+<p>
+For example, <tt>str</tt> is a subtype of <tt>typing.Sequence[str]</tt>, although a
+runtime vector conversion may reject strings. A type checker therefore needs the
+string overload before the sequence overload even when runtime dispatch checks
+the vector first. Explicit ranks apply before duplicate signatures are combined
+and also apply to the shorter signatures generated for default arguments. They
+do not change runtime dispatch.
 </p>
 
 <p>
