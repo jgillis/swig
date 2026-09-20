@@ -981,7 +981,7 @@ int MATLAB::functionWrapper(Node *n) {
         continue;
       }
 
-      sprintf(source, "argv[%d]", j);
+      snprintf(source, sizeof(source), "argv[%d]", j);
       Setattr(p, "emit:input", source);
 
       Replaceall(tm, "$source", Getattr(p, "emit:input"));
@@ -1744,7 +1744,7 @@ int MATLAB::classDirectorMethod(Node *n, Node *parent, String *super) {
       if ((tm = Getattr(p, "tmap:directorin")) != 0) {
         String *parse = Getattr(p, "tmap:directorin:parse");
         if (!parse) {
-          sprintf(source, "obj%d", idx++);
+          snprintf(source, sizeof(source), "obj%d", idx++);
           String *input = NewString(source);
           Setattr(p, "emit:directorinput", input);
           Replaceall(tm, "$input", input);
@@ -1782,7 +1782,7 @@ int MATLAB::classDirectorMethod(Node *n, Node *parent, String *super) {
         if (SwigType_ispointer(ptype) || SwigType_isreference(ptype)) {
           Node *module = Getattr(parent, "module");
           Node *target = Swig_directormap(module, ptype);
-          sprintf(source, "obj%d", idx++);
+          snprintf(source, sizeof(source), "obj%d", idx++);
           String *nonconst = 0;
           /* strip pointer/reference --- should move to Swig/stype.c */
           String *nptype = NewString(Char(ptype) + 2);
@@ -1931,7 +1931,7 @@ int MATLAB::classDirectorMethod(Node *n, Node *parent, String *super) {
           Replaceall(tm, "$input", Swig_cresult_name());
         }
         char temp[24];
-        sprintf(temp, "%d", idx);
+        snprintf(temp, sizeof(temp), "%d", idx);
         Replaceall(tm, "$argnum", temp);
 
         /* TODO check this */
@@ -2039,7 +2039,14 @@ int MATLAB::enumDeclaration(Node *n) {
 }
 
 int MATLAB::enumvalueDeclaration(Node *n) {
-  return Language::enumvalueDeclaration(n);
+  if (!cparse_cplusplus)
+    return Language::enumvalueDeclaration(n);
+  Swig_save("matlab:enumvalue", n, "type", NIL);
+  String *enum_type = Getattr(parentNode(n), "type");
+  Setattr(n, "type", enum_type ? enum_type : "enum SWIGTYPE");
+  int result = Language::enumvalueDeclaration(n);
+  Swig_restore(n);
+  return result;
 }
 
 int MATLAB::classHandler(Node *n) {

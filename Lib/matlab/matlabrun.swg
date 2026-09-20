@@ -5,7 +5,16 @@ static void SWIG_Error_va(int code, const char *format, va_list arg) {
   SWIG_lasterror_code = code;
   free(SWIG_lasterror_msg);
   va_list arg_copy;
+#if defined(va_copy)
   va_copy(arg_copy, arg);
+#elif defined(__va_copy)
+  __va_copy(arg_copy, arg);
+#elif defined(_MSC_VER)
+  /* MSVC represents va_list as an assignable argument pointer. */
+  arg_copy = arg;
+#else
+#error "MATLAB runtime requires va_copy or a supported va_list copy operation"
+#endif
   int n = vsnprintf(NULL, 0, format, arg_copy);
   va_end(arg_copy);
   SWIG_lasterror_msg = (char*)malloc(n + 1);

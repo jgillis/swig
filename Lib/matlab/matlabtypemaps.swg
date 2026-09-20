@@ -29,6 +29,7 @@
 
 // Include the unified typemap library
 %include <typemaps/swigtypemaps.swg>
+%include <matlabenum.swg>
 
 /* Raw mxArray handles accept all values, including Octave classdef objects
  * whose class ID is mxUNKNOWN_CLASS. */

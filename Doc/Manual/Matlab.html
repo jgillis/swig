@@ -109,6 +109,13 @@ Boolean parameters accept logical scalars. Integer outputs use MATLAB integer
 classes; floating point outputs use MATLAB doubles.
 </p>
 <p>
+With C++11 or later, enum inputs are checked against the range of their C++
+underlying type. Signed enum outputs use MATLAB <tt>int64</tt>, and unsigned
+enum outputs use <tt>uint64</tt>, preserving all 64 bits. These conversions
+also apply to constants and container elements. C and C++98 wrappers retain
+the ordinary <tt>int</tt> enum conversion.
+</p>
+<p>
 Character row vectors map to <tt>char *</tt> and, with
 <tt>%include &lt;std_string.i&gt;</tt>, to <tt>std::string</tt>. The narrow string
 mapping preserves bytes, including embedded zero bytes in <tt>std::string</tt>;

@@ -40,25 +40,30 @@ namespace swig {
 
 %define %traits_enum(Type...)
   %fragment("SWIG_Traits_enum_"{Type},"header",
-	    fragment=SWIG_AsVal_frag(int),
-	    fragment=SWIG_From_frag(int),
+	    fragment="SWIG_Matlab_Enum",
 	    fragment="StdTraits") {
 namespace swig {
   template <>  struct traits_asval<Type > {
     typedef Type value_type;
     static int asval(mxArray* obj, value_type *val) {
-      return SWIG_AsVal(int)(obj, (int *)val);
+      return SWIG_Matlab_Enum<Type>::asval(obj, val);
     }
   };
   template <>  struct traits_from<Type > {
     typedef Type value_type;
     static mxArray* from(const value_type& val) {
-      return SWIG_From(int)((int)val);
+      return SWIG_Matlab_Enum<Type>::from(val);
     }
   };
+  /* Shared STL declarations initially classify unknown element types as
+     pointers. Enum values use the checked value conversion instead. */
+  template <> struct traits_as<Type, pointer_category> : traits_as<Type, value_category> {};
+  template <> struct traits_check<Type, pointer_category> : traits_check<Type, value_category> {};
 }
 }
-%typemap(out, fragment="SWIG_Traits_enum_"{Type}) const enum SWIGTYPE& front %{$typemap(out, const enum SWIGTYPE&)%}
+%typemap(out, fragment="SWIG_Traits_enum_"{Type}) const enum SWIGTYPE& front %{
+  %set_output(SWIG_Matlab_Enum<Type>::from(*$1));
+%}
 %enddef
 
 

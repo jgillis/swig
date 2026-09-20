@@ -1,4 +1,4 @@
-%fragment("StdTraits","header",fragment="StdTraitsCommon")
+%fragment("StdTraits","header",fragment="StdTraitsCommon",fragment="SWIG_Matlab_Enum")
 {
 namespace swig {
 // Traits that provides the from method
@@ -8,11 +8,19 @@ namespace swig {
     }
   };
 
-  template <class Type> struct traits_from {
+  template <class Type, bool IsEnum> struct matlab_traits_from {
     static mxArray* from(const Type& val) {
       return traits_from_ptr<Type>::from(new Type(val), 1);
     }
   };
+  template <class Type> struct matlab_traits_from<Type, true> {
+    static mxArray *from(const Type &value) { return SWIG_Matlab_Enum<Type>::from(value); }
+  };
+%#if __cplusplus >= 201103L
+  template <class Type> struct traits_from : matlab_traits_from<Type, std::is_enum<Type>::value> {};
+%#else
+  template <class Type> struct traits_from : matlab_traits_from<Type, false> {};
+%#endif
 
   template <class Type> struct traits_from<Type *> {
     static mxArray* from(Type* val) {
@@ -38,8 +46,8 @@ namespace swig {
   }
 
     // Traits that provides the asval/as/check method
-  template <class Type>
-  struct traits_asptr {
+  template <class Type, bool IsEnum>
+  struct matlab_traits_asptr {
     static int asptr(mxArray* pm, Type **val) {
       Type *p;
       int res = SWIG_ConvertPtr(pm, (void**)&p, type_info<Type>(), 0);
@@ -49,6 +57,23 @@ namespace swig {
       return res;
     }
   };
+
+  template <class Type> struct matlab_traits_asptr<Type, true> {
+    static int asptr(mxArray *input, Type **result) {
+      Type value;
+      int status = SWIG_Matlab_Enum<Type>::asval(input, result ? &value : 0);
+      if (SWIG_IsOK(status) && result) {
+        *result = new Type(value);
+        return SWIG_NEWOBJ;
+      }
+      return status;
+    }
+  };
+%#if __cplusplus >= 201103L
+  template <class Type> struct traits_asptr : matlab_traits_asptr<Type, std::is_enum<Type>::value> {};
+%#else
+  template <class Type> struct traits_asptr : matlab_traits_asptr<Type, false> {};
+%#endif
 
   template <class Type>
   inline int asptr(mxArray* pm, Type **vptr) {
