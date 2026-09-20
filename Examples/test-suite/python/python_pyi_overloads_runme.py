@@ -99,3 +99,13 @@ swig_check(m.typemap_default(3), 3)
 swig_check(m.typemap_default("hello"), "hello")
 int_default = next(item for item in functions["typemap_default"] if ast.literal_eval(item.returns) == "int")
 swig_check(len(int_default.args.defaults), 1)
+
+extended = m.Extended()
+cls = next(item for item in tree.body if isinstance(item, ast.ClassDef) and item.name == "Extended")
+for name in ("qualified", "bare", "instance"):
+    swig_check(getattr(extended, name)("text"), name)
+    swig_check(getattr(extended, name)(4), 4)
+    methods = [item for item in cls.body if isinstance(item, ast.FunctionDef) and item.name == name]
+    swig_check(len(methods), 2)
+    swig_check({ast.literal_eval(item.returns) for item in methods}, {"str", "int"})
+    swig_check({ast.literal_eval(item.args.args[-1].annotation) for item in methods}, {"str", "int"})

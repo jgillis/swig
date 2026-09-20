@@ -3032,8 +3032,21 @@ public:
     String *tm = Getattr(n, "tmap:pytyping");
     if (tm)
       tm = Copy(tm);
-    else
+    else {
+      // Wrapper generation may replace an extended member's name with the C++
+      // helper name. Named pytyping typemaps refer to the original member.
+      String *membername = Getattr(n, "memberfunctionHandler:name");
+      if (!membername)
+        membername = Getattr(n, "staticmemberfunctionHandler:name");
+      String *wrappername = membername ? Copy(Getattr(n, "name")) : 0;
+      if (membername)
+        Setattr(n, "name", membername);
       tm = Swig_typemap_lookup("pytyping", n, Swig_cresult_name(), 0);
+      if (membername) {
+        Setattr(n, "name", wrappername);
+        Delete(wrappername);
+      }
+    }
     if (tm && out) {
       String *outty = Getattr(n, "tmap:pytyping:out");
       if (outty) {

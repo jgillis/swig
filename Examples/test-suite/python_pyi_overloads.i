@@ -102,3 +102,22 @@ int max_rank(bool value) { return value ? 17 : 0; }
 int typemap_default(int synthesized) { return synthesized; }
 std::string typemap_default(std::string text) { return text; }
 %}
+
+// Cached overload annotations must use original %extend member names.
+%typemap(pytyping) const char *named_annotations::Extended::qualified "str"
+%typemap(pytyping) const char *bare "str"
+%typemap(pytyping, out="str") const char *named_annotations::Extended::instance "typing.Optional[str]"
+%typemap(pytyping) const char *text "str"
+%inline %{
+namespace named_annotations {
+  struct Extended {};
+}
+%}
+%extend named_annotations::Extended {
+  static const char *qualified(const char *text) { (void)text; return "qualified"; }
+  static int qualified(int value) { return value; }
+  static const char *bare(const char *text) { (void)text; return "bare"; }
+  static int bare(int value) { return value; }
+  const char *instance(const char *text) { (void)text; return "instance"; }
+  int instance(int value) { return value; }
+}

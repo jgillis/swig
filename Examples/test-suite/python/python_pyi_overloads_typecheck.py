@@ -65,3 +65,11 @@ typemap_integer: int = typemap_default(3)
 typemap_string: str = typemap_default("hello")
 typemap_wrong: str = typemap_default()  # type: ignore
 typemap_default([])  # type: ignore
+
+from python_pyi_overloads import Extended
+extended_qualified: str = Extended.qualified("text")
+extended_bare: str = Extended.bare("text")
+extended_instance: str = Extended().instance("text")
+extended_number: int = Extended().instance(4)
+extended_wrong: int = Extended.qualified("text")  # type: ignore
+Extended().instance(None)  # type: ignore
