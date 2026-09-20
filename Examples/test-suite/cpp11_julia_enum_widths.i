@@ -11,6 +11,20 @@
 %csconstvalue("(1UL << 63)") UnsignedWide::Middle;
 %csconstvalue("Renamed") Alias;
 #endif
+#ifdef SWIGD
+// D requires its own integer suffixes and the renamed enumerator.
+%dconstvalue("(-9223372036854775807L - 1)") SignedWide::Low;
+%dconstvalue("(1UL << 63)") UnsignedWide::Middle;
+%dconstvalue("18446744073709551615UL") UnsignedWide::High;
+%dconstvalue("18446744073709551615UL") AnonymousHigh;
+%dconstvalue("Renamed") Alias;
+#endif
+#ifdef SWIGGO
+// TODO: Go wraps anonymous enum constants as int regardless of their underlying type.
+%ignore AnonymousHigh;
+%rename(ordinary_value) ordinary;
+%rename(nested_value) EnumOwner::nested;
+#endif
 %inline %{
 #include <limits>
 enum Ordinary { First = -2, Hidden = 12, Next, Original = 0x20, Alias = Original, Expression = (1 << 8) };
