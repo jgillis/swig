@@ -12,6 +12,8 @@ Version 4.6.0 (in progress)
             omit the unused typing import and annotation helpers from the runtime
             proxy module. This avoids exporting typing through wildcard imports.
             Runtime annotations without a stub file retain their typing import.
+            Generated stub-mode proxies remain checkable without runtime typing
+            helpers, including director ownership and inherited dispatch methods.
 
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are

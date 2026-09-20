@@ -2572,6 +2572,23 @@ public:
     return NewStringf("@_swig_dispatch\n%s", indent);
   }
 
+  /* The stub carries the public signature. Suppress only the implementation's
+     incompatible override when either signature uses positional dispatch. */
+  const char *dispatchOverrideComment(Node *n) {
+    if (!pyi_stub)
+      return "";
+    Node *parent = Swig_methodclass(n);
+    List *bases = parent ? Getattr(parent, "bases") : 0;
+    for (int i = 0; bases && i < Len(bases); ++i) {
+      Node *base = Getitem(bases, i);
+      Node *method = Swig_symbol_clookup_local(Getattr(n, "name"), Getattr(base, "symtab"));
+      if (method && SwigType_isfunction(Getattr(method, "decl")) && Equal(Getattr(method, "sym:name"), Getattr(n, "sym:name")) &&
+          !GetFlag(method, "feature:ignore") && is_public(method) && (is_pyargs_dispatcher(n) || is_pyargs_dispatcher(method)))
+        return "  # type: ignore[override]";
+    }
+    return "";
+  }
+
   /* ------------------------------------------------------------
    * make_pyParmList()
    *
@@ -4814,7 +4831,8 @@ public:
         String *symname = Getattr(n, "sym:name");
         String *mrename = Swig_name_disown(NSPACE_TODO, symname);  // Getattr(n, "name"));
         Printv(shadow_code, tab4, "def __disown__(self):\n", NIL);
-        Printv(shadow_code, tab8, "self.this.disown()\n", NIL);
+        /* The extension injects this pointer; stub mode has no runtime annotation for it. */
+        Printv(shadow_code, tab8, "self.this.disown()", pyi_stub ? "  # type: ignore[attr-defined]" : "", "\n", NIL);
         Printv(shadow_code, tab8, module, ".", mrename, "(self)\n", NIL);
         Printv(shadow_code, tab8, "return weakref.proxy(self)\n", NIL);
         Delete(mrename);
@@ -5788,7 +5806,7 @@ public:
           if (!have_addtofunc(n)) {
             if (!fastproxy || olddefs) {
               String *deco = dispatchDecorator(n, tab4);
-              Printv(shadow_code, "\n", tab4, deco, "def ", symname, "(", parms, ")", returnTypeAnnotation(n), ":\n", NIL);
+              Printv(shadow_code, "\n", tab4, deco, "def ", symname, "(", parms, ")", returnTypeAnnotation(n), ":", dispatchOverrideComment(n), "\n", NIL);
               Delete(deco);
               if (Node *node_with_doc = find_overload_with_docstring(n))
                 Printv(shadow_code, tab8, docstring(node_with_doc, AUTODOC_METHOD, tab8), "\n", NIL);
@@ -5796,7 +5814,7 @@ public:
             }
           } else {
             String *deco = dispatchDecorator(n, tab4);
-            Printv(shadow_code, "\n", tab4, deco, "def ", symname, "(", parms, ")", returnTypeAnnotation(n), ":\n", NIL);
+            Printv(shadow_code, "\n", tab4, deco, "def ", symname, "(", parms, ")", returnTypeAnnotation(n), ":", dispatchOverrideComment(n), "\n", NIL);
             Delete(deco);
             if (Node *node_with_doc = find_overload_with_docstring(n))
               Printv(shadow_code, tab8, docstring(node_with_doc, AUTODOC_METHOD, tab8), "\n", NIL);
@@ -5900,7 +5918,7 @@ public:
         String *callParms = make_pyParmList(n, false, true, kw);
         String *deco = dispatchDecorator(n, tab4);
         Printv(shadow_code, "\n", tab4, "@staticmethod", NIL);
-        Printv(shadow_code, "\n", tab4, deco, "def ", symname, "(", parms, ")", returnTypeAnnotation(n), ":\n", NIL);
+        Printv(shadow_code, "\n", tab4, deco, "def ", symname, "(", parms, ")", returnTypeAnnotation(n), ":", dispatchOverrideComment(n), "\n", NIL);
         Delete(deco);
         if (Node *node_with_doc = find_overload_with_docstring(n))
           Printv(shadow_code, tab8, docstring(node_with_doc, AUTODOC_STATICFUNC, tab8), "\n", NIL);
