@@ -1464,9 +1464,17 @@ int MATLAB::classDirectorConstructor(Node *n) {
   Parm *p;
   ParmList *superparms = Getattr(n, "parms");
   ParmList *parms = CopyParmList(superparms);
+  Wrapper *names = NewWrapper();
+  for (Parm *parameter = superparms; parameter; parameter = nextSibling(parameter)) {
+    String *name = Getattr(parameter, "name");
+    if (name)
+      Wrapper_add_local(names, name, name);
+  }
+  String *self = NewString(Wrapper_new_local(names, "self", "mxArray *self"));
+  DelWrapper(names);
   String *type = NewString("mxArray");
   SwigType_add_pointer(type);
-  p = NewParm(type, NewString("self"), n);
+  p = NewParm(type, self, n);
   set_nextSibling(p, parms);
   parms = p;
 
@@ -1478,9 +1486,9 @@ int MATLAB::classDirectorConstructor(Node *n) {
       String *basetype = Getattr(parent, "classtype");
       String *target = Swig_method_decl(0, decl, classname, parms, 0);
       call = Swig_csuperclass_call(0, basetype, superparms);
-      Printf(w->def, "%s::%s: %s, Swig::Director(self) { \n", classname, target, call);
+      Printf(w->def, "%s::%s: %s, Swig::Director(%s) { \n", classname, target, call, self);
       Printf(w->def, "   SWIG_DIRECTOR_RGTR((%s *)this, this); \n", basetype);
-      Printf(w->def, "   SWIG_Matlab_getSwigPtr(self);\n");
+      Printf(w->def, "   SWIG_Matlab_getSwigPtr(%s);\n", self);
       Append(w->def, "}\n");
       Delete(target);
       Wrapper_print(w, f_directors);
@@ -1496,6 +1504,8 @@ int MATLAB::classDirectorConstructor(Node *n) {
     }
   }
 
+  Delete(self);
+  Delete(type);
   Delete(sub);
   Delete(classname);
   Delete(supername);

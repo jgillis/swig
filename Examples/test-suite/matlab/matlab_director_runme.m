@@ -30,3 +30,17 @@ delete(callback);
 assert(matlab_director.callback_count() == 1);
 delete(base);
 assert(matlab_director.callback_count() == 0);
+for arguments = {{3}, {2.5, 4}}
+  ordinary = matlab_director.NamedConstructor(arguments{1}{:});
+  if numel(arguments{1}) == 1
+    expected = 3;
+  else
+    expected = 6;
+  end
+  assert(ordinary.method() == expected);
+  delete(ordinary);
+  callback = MatlabNamedConstructor(arguments{1}{:});
+  assert(matlab_director.invoke_named(callback) == 19);
+  delete(callback);
+end
+assert(SwigStorage() == stored);

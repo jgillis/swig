@@ -1,3 +1,7 @@
+2026-09-21: jgillis
+            [Matlab] Fix director constructor parameters named self and self0, including
+            overloaded constructor calls with Octave classdef handles.
+
 Below are the changes for the current release.
 See the CHANGES file for changes in older releases.
 See the RELEASENOTES file for a summary of changes in each release.

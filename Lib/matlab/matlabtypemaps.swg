@@ -30,4 +30,6 @@
 // Include the unified typemap library
 %include <typemaps/swigtypemaps.swg>
 
-%typecheck(SWIG_TYPECHECK_SWIGOBJECT) SWIG_Object "$1 = mxGetClassID($input) != mxUNKNOWN_CLASS;";
+/* Raw mxArray handles accept all values, including Octave classdef objects
+ * whose class ID is mxUNKNOWN_CLASS. */
+%typecheck(SWIG_TYPECHECK_SWIGOBJECT) SWIG_Object "$1 = $input != NULL;";

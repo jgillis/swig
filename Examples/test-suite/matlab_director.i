@@ -1,5 +1,6 @@
 %module(directors="1") matlab_director
 %feature("director") Callback;
+%feature("director") NamedConstructor;
 %apply int &OUTPUT { int &extra };
 #ifdef SWIGMATLAB
 %typemap(directorargout) int &extra { $1 = (int)mxGetScalar($result); }
@@ -27,4 +28,15 @@ int invoke_split(Callback &callback, int value) {
   int extra = 0;
   return callback.split(value, extra) + extra;
 }
+%}
+
+%inline %{
+struct NamedConstructor {
+  NamedConstructor(int self) : initial(self) {}
+  NamedConstructor(double self, int self0) : initial((int)self + self0) {}
+  virtual ~NamedConstructor() {}
+  virtual int method() { return initial; }
+  int initial;
+};
+int invoke_named(NamedConstructor &callback) { return callback.method(); }
 %}
